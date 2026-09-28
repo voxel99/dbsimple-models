@@ -81,6 +81,10 @@ final class MysqlDialectTest extends DatabaseTestCase
     public function testModelsWorkThroughLazyConnectWrapper(): void
     {
         $url = parse_url((string) getenv('DBSIMPLE_TEST_MYSQL'));
+        // jam/dbsimple: Connect.php объявляет DBSIMPLE_ARRAY_KEY/PARENT_KEY без проверки defined(),
+        // и если Database.php загружен раньше — PHP выдаёт warning. В приложении Connect обычно
+        // загружается первым; в тестах подавляем предупреждение при автозагрузке.
+        @class_exists(\Jam\DbSimple\Connect::class);
         $connect = new \Jam\DbSimple\Connect(sprintf(
             'mypdo://%s:%s@%s/%s?enc=utf8mb4',
             $url['user'],

@@ -123,6 +123,10 @@ class ConvertableHelperFromArray
     private function makeNode(ConvertableHelperFromArrayData $convertableHelperData)
     {
         $v = $convertableHelperData->v;
+        // Уже готовая модель/список (например, new Post(['author' => $user])) — используем как есть
+        if ($v instanceof \Jam\Models\ModelAbstract) {
+            return $v;
+        }
         if ($convertableHelperData->className) {
             /*
                 Добавил проверку is_scalar, т.к. при передаче 'source' => 'www.link.data', вызывался

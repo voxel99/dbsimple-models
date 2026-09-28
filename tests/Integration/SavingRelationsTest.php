@@ -70,6 +70,20 @@ final class SavingRelationsTest extends DatabaseTestCase
         $this->assertSame(1, Category::instance()->count());
     }
 
+    public function testExistingModelsInConstructorData(): void
+    {
+        (new User(['email' => 'a@x.io']))->save();
+        $author = User::instance()->id(1)->first();
+        $tag = new Tag(['name' => 'php']);
+
+        $post = new Post(['title' => 'P', 'author' => $author, 'tags' => [$tag, ['name' => 'orm']]]);
+        $post->save();
+
+        $this->assertSame($author, $post->author);
+        $this->assertSame(1, $post->user_id);
+        $this->assertSame(['php', 'orm'], Post::instance()->with('tags:o(id)')->id(1)->first()->tags->column('name'));
+    }
+
     public function testSaveManyToManyCreatesPivotRows(): void
     {
         $post = new Post(['title' => 'Tagged', 'tags' => [['name' => 'php'], ['name' => 'orm']]]);
