@@ -431,10 +431,10 @@ class Model extends ModelAbstract implements IRelationList
      * [удаление отвязанных записей при SAVE_USE_CHECK_OLD] -> has-связи и pivot-строки.
      *
      * @param array<string, mixed> $params SAVE_USE_* и параметры для связей: [alias => [...], SAVE_PARAMS_ALL => [...]]
-     * @return int ID записи
+     * @return int|string ID записи (строка — для нечисловых ключей: строковый pk, ObjectId в MongoDB)
      * @throws ModelException
      */
-    public function save(array $params = [], bool $saveRelations = true): int
+    public function save(array $params = [], bool $saveRelations = true): int|string
     {
         $options = $this->resolveSaveOptions($params);
 
@@ -454,7 +454,7 @@ class Model extends ModelAbstract implements IRelationList
         if ($saveRelations) {
             $this->saveHasRelations($options[self::SAVE_USE_INSERT]);
         }
-        return (int) $newId;
+        return is_numeric($newId) ? (int) $newId : $newId;
     }
 
     /**
