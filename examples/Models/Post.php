@@ -8,6 +8,7 @@ use Jam\Models\StringableInterface;
 use Jam\Models\Traits\SoftDeletes;
 use Jam\Models\Traits\Stringable;
 use Jam\Models\Traits\Timestamps;
+use Jam\Models\Utils\ArrayHelper;
 
 /**
  * @property int $id
@@ -61,5 +62,56 @@ class Post extends BaseModel implements StringableInterface
     public static function published(): static
     {
         return static::instance()->where('status = ?d', self::STATUS_PUBLISHED);
+    }
+
+    /**
+     * «With-профиль» поста: какие данные подгружать вместе с постом — в одном месте,
+     * а КАКИЕ ИМЕННО — решает вызывающий код параметрами.
+     *
+     *     Post::instance()->with(Post::commonWithString(viewerId: $me, comments: true))->all();
+     *     User::instance()->with(Post::commonWithString('posts:o(id)'))->all();   // вложенно
+     *
+     * @param string $name     путь, к которому «прикрепить» профиль ('' — от самого поста,
+     *                         'posts:o(id)' — от связи posts родителя, 'subject' — полиморфная связь)
+     * @param int    $viewerId кто смотрит: от этого зависят условия (свои неодобренные комментарии)
+     * @param bool   $comments комментарии (только одобренные + свои)
+     * @param bool   $commentsDeep авторы комментариев с профилями
+     * @param bool   $full     всё остальное для страницы поста: категория с родителем, профиль автора
+     */
+    public static function commonWithString(
+        string $name = '',
+        int $viewerId = 0,
+        bool $comments = false,
+        bool $commentsDeep = false,
+        bool $full = false,
+    ): string {
+        // Всегда: автор (только нужные колонки + computed) и теги в стабильном порядке.
+        // ! — в toArray() будет [] вместо null: форма ответа API не зависит от данных.
+        $with = [
+            'author(id, name, email, role_id):c',
+            'author.role(id, code)',
+            'tags!:o(name)',
+        ];
+
+        if ($comments) {
+            // Условие зависит от того, кто смотрит: гость видит одобренные,
+            // пользователь — ещё и свои, ожидающие модерации.
+            $commentsString = $viewerId
+                ? sprintf('comments[is_approved = 1 OR user_id = %d]!:o(id)', $viewerId)
+                : 'comments[is_approved = 1]!:o(id)';
+            $with[] = $commentsString;
+            if ($commentsDeep) {
+                // Путь comments повторяется: узлы сливаются, условие и флаги задаются один раз выше
+                $with[] = 'comments.author(id, name)';
+                $with[] = 'comments.author.profile(id, user_id, bio)';
+            }
+        }
+
+        if ($full) {
+            $with[] = 'category(id, parent_id, title).parent(id, title)';
+            $with[] = 'author.profile!';
+        }
+
+        return implode(', ', array_unique(ArrayHelper::extendsWithName($with, $name)));
     }
 }
