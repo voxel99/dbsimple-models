@@ -2,88 +2,88 @@
 
 namespace Jam\Models\Traits\Crud;
 
-use Jam\Models\DummyModel;
 use Jam\Models\Model;
-use Jam\Models\ModelException;
-use Jam\Models\Utils\Code;
 
 trait Insertable
 {
+    /**
+     * Вставка одной строки (ассоциативный массив) или нескольких (список массивов) одним запросом.
+     *
+     * @param array<string, mixed>|array<int, array<string, mixed>> $ins
+     * @return int|string ID вставленной строки (для одиночной вставки)
+     */
     public function insertInternal(array $ins, $ignore = false, $on_duplicate_key_update = false)
     {
-        if (Code::isImplements($this, DummyModel::class)) {
-            throw new ModelException('DummyModel is readonly');
-        }
-        $duplicate_expr = '';
-        $duplicate_arr = [];
+        $this->assertWritable();
 
-        if (isset($ins[0])) {
-            // multy insert
-            foreach ($ins as $k => $_ins) {
-                $ins[$k] = $this->fire(Model::EVENT_CREATING, $_ins);
-                if (!$ins[$k]) {
-                    $ins = false;
-                    break;
-                }
-                $ins[$k] = static::convertRecordsBeforeSaveToDb($ins[$k]);
-            }
-        } else {
-            // Обработчик creating может вернуть false — вставка отменяется
-            $ins = $this->fire(Model::EVENT_CREATING, $ins);
-            $ins = $ins ? static::convertRecordsBeforeSaveToDb($ins) : false;
+        $isMulti = isset($ins[0]);
+        $rows = $this->prepareInsertRows($isMulti ? $ins : [$ins]);
+        if (!$rows) {
+            return 0;
         }
 
-        $id = 0;
+        $fields = array_keys($rows[0]);
+        $sql = 'INSERT ' . ($ignore ? 'IGNORE ' : '')
+            . 'INTO ?_' . $this->table()
+            . ' (?#) VALUES (?a)'
+            . ($on_duplicate_key_update ? $this->onDuplicateKeyUpdateExpression($fields, $rows[0]) : '');
 
-        if ($ins) {
-            if (isset($ins[0])) {
-                $fields = array_keys($ins[0]);
-                $values = array_values($ins);
-            } else {
-                $fields = array_keys($ins);
-                $values = array_values($ins);
+        if ($on_duplicate_key_update) {
+            $this->db->query('SET SESSION sql_mode = "NO_ENGINE_SUBSTITUTION"');
+        }
+        $id = $this->db->query($sql, $fields, $isMulti ? array_values($rows) : array_values($rows[0]));
+        if ($on_duplicate_key_update) {
+            $this->db->query('SET SESSION sql_mode = @@GLOBAL.sql_mode');
+        }
+
+        if (!$isMulti) {
+            // Для ключа, заданного явно (в т.ч. строкового), lastInsertId() не информативен
+            if (!$id && isset($rows[0][$this->pk()])) {
+                $id = $rows[0][$this->pk()];
             }
-
-
-            if ($on_duplicate_key_update) {
-                foreach ($fields as $f) {
-                    $duplicate_arr[] = '`' . $f . '` = VALUES(`' . $f . '`)';
-                }
-
-                /*
-                    http://dev.mysql.com/doc/refman/5.0/en/insert-on-duplicate.html
-                    If a table contains an AUTO_INCREMENT column and INSERT ... UPDATE inserts a row, the LAST_INSERT_ID()
-                    function returns the AUTO_INCREMENT value. If the statement updates a row instead, LAST_INSERT_ID()
-                    is not meaningful. However, you can work around this by using LAST_INSERT_ID(expr).
-                    Suppose that id is the AUTO_INCREMENT column. To make LAST_INSERT_ID() meaningful for updates,
-                    insert rows as follows:
-
-                    INSERT INTO table (a,b,c) VALUES (1,2,3) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), c=3;
-                */
-                $duplicate_arr[] = '`' . $this->pk() . '` = LAST_INSERT_ID(`' . $this->pk() . '`)';
-                $duplicate_expr = " ON DUPLICATE KEY UPDATE " . implode(", ", $duplicate_arr);
-            }
-
-            $sql = 'INSERT ' . ($ignore ? 'IGNORE ' : '')
-                . 'INTO ?_' . $this->table()
-                . ' (?#) VALUES (?a)'
-                . $duplicate_expr;
-            if ($on_duplicate_key_update) {
-                $this->db->query('SET SESSION sql_mode = "NO_ENGINE_SUBSTITUTION"');
-            }
-            $id = $this->db->query(
-                $sql,
-                $fields,
-                $values
-            );
-            if ($on_duplicate_key_update) {
-                $this->db->query('SET SESSION sql_mode = @@GLOBAL.sql_mode');
-            }
-            if (!isset($ins[0])) {
-                $this->fire(Model::EVENT_CREATED, $id, $ins);
-            }
+            $this->fire(Model::EVENT_CREATED, $id, $rows[0]);
         }
         return $id;
+    }
+
+    /**
+     * Прогоняет строки через событие creating и конвертирует для БД.
+     * Если обработчик вернул false хотя бы для одной строки — вставка отменяется целиком.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     * @return array<int, array<string, mixed>>
+     */
+    private function prepareInsertRows(array $rows): array
+    {
+        foreach ($rows as $k => $row) {
+            $row = $this->fire(Model::EVENT_CREATING, $row);
+            if (!$row) {
+                return [];
+            }
+            $rows[$k] = static::convertRecordsBeforeSaveToDb($row);
+        }
+        return $rows;
+    }
+
+    /**
+     * @param array<int, string> $fields
+     * @param array<string, mixed> $firstRow
+     */
+    private function onDuplicateKeyUpdateExpression(array $fields, array $firstRow): string
+    {
+        $parts = array_map(static fn($f) => '`' . $f . '` = VALUES(`' . $f . '`)', $fields);
+
+        // Если строка обновилась, LAST_INSERT_ID() не информативен; LAST_INSERT_ID(pk) заставляет
+        // его вернуть id существующей строки (см. документацию MySQL по INSERT ... ON DUPLICATE KEY UPDATE).
+        // Только для числовых ключей: для строкового ключа LAST_INSERT_ID('abc') = 0 и ключ строки
+        // перезаписывался нулём.
+        $pk = $this->pk();
+        $pkValue = $firstRow[$pk] ?? null;
+        if ($pkValue === null || is_numeric($pkValue)) {
+            $parts[] = '`' . $pk . '` = LAST_INSERT_ID(`' . $pk . '`)';
+        }
+
+        return ' ON DUPLICATE KEY UPDATE ' . implode(', ', $parts);
     }
 
     public function doInsert($ignore = false, $on_duplicate_key_update = false)

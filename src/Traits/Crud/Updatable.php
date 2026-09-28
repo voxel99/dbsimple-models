@@ -3,45 +3,14 @@
 namespace Jam\Models\Traits\Crud;
 
 use Exception;
-use Jam\Models\DummyModel;
 use Jam\Models\Model;
-use Jam\Models\ModelException;
 use Jam\Models\Utils\ArrayHelper;
-use Jam\Models\Utils\Code;
 
 trait Updatable
 {
-/*
-    public function replace(array $ins) {
-        if (Code::isImplements($this, DummyModel::class)) {
-            throw new ModelException('DummyModel is readonly');
-        }
-
-        if (isset($ins[0])) {
-            foreach ($ins as $k => $_ins) {
-                $ins[$k] = static::convertRecordsBeforeSaveToDb($_ins);
-            }
-            $fields = array_keys($ins[0]);
-            $values = array_values($ins);
-        } else {
-            $ins = static::convertRecordsBeforeSaveToDb($ins);
-            $fields = array_keys($ins);
-            $values = array_values($ins);
-        }
-
-        $sql = 'REPLACE INTO ?_' . $this->table() . ' (?#) VALUES (?a)';
-        $this->db->query(
-            $sql,
-            $fields,
-            $values
-        );
-    }
-*/
     public function update($fields = "")
     {
-        if (Code::isImplements($this, DummyModel::class)) {
-            throw new ModelException('DummyModel is readonly');
-        }
+        $this->assertWritable();
         $id = $this->{$this->pk};
         $upd = $this->toArray([
             self::FLAG_DEPENDENCIES => false,

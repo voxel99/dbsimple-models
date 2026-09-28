@@ -196,6 +196,16 @@ class Model extends ModelAbstract implements IRelationList
         return $this;
     }
 
+    /**
+     * @throws ModelException DummyModel (справочник в коде) только для чтения
+     */
+    protected function assertWritable(): void
+    {
+        if ($this instanceof DummyModel) {
+            throw new ModelException('DummyModel is readonly');
+        }
+    }
+
     public function useTrashed(): bool
     {
         return false;

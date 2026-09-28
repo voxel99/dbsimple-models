@@ -146,6 +146,16 @@ final class Schema
                 subject_id INT UNSIGNED NOT NULL DEFAULT 0
             )',
         ],
+        'options' => [
+            'sqlite' => 'CREATE TABLE options (
+                name VARCHAR(64) NOT NULL PRIMARY KEY,
+                value TEXT NULL
+            )',
+            'mysql' => 'CREATE TABLE options (
+                name VARCHAR(64) NOT NULL PRIMARY KEY,
+                value TEXT NULL
+            )',
+        ],
     ];
 
     public static function create(\PDO $pdo): void

@@ -82,15 +82,17 @@ abstract class ModelAbstract
         }
     }
 
+    /**
+     * Передаёт связанной/созданной модели соединение (и, опционально, with).
+     * Важно переключать именно через db(): раньше копировалось только имя соединения,
+     * а запросы связанной модели продолжали идти в master.
+     */
     public function inheritModel(ModelAbstract $M, $inheritWith = false): void
     {
-        $inherit = [
-            'jamConnection' => $this->jamConnection
-        ];
+        $M->db($this->jamConnection);
         if ($inheritWith) {
-            $inherit['with'] = $this->with;
+            $M->setState(['with' => $this->with]);
         }
-        $M->setState($inherit);
     }
 
     /**
