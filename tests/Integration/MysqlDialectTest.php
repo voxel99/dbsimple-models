@@ -77,4 +77,26 @@ final class MysqlDialectTest extends DatabaseTestCase
         $this->assertQueryLogContains('LIMIT 1 FOR UPDATE');
         $this->assertSame('Locked', User::instance()->id(1)->value('name'));
     }
+
+    public function testModelsWorkThroughLazyConnectWrapper(): void
+    {
+        $url = parse_url((string) getenv('DBSIMPLE_TEST_MYSQL'));
+        $connect = new \Jam\DbSimple\Connect(sprintf(
+            'mypdo://%s:%s@%s/%s?enc=utf8mb4',
+            $url['user'],
+            $url['pass'] ?? '',
+            $url['host'],
+            ltrim($url['path'], '/')
+        ));
+        $connect->setErrorHandler(static function (string $message): void {
+            throw new \RuntimeException($message);
+        });
+        Model::initDbSimple([Model::DB_MASTER => $connect]);
+
+        (new User(['email' => 'lazy@x.io', 'posts' => [['title' => "It's lazy"]]]))->save();
+        $user = User::instance()->with('posts[title = this(email) OR 1=1]')->where('email = ?', 'lazy@x.io')->first();
+
+        $this->assertSame(["It's lazy"], $user->posts->column('title'));
+        $this->assertSame("'x'", $user->getDb()->escape('x'));
+    }
 }

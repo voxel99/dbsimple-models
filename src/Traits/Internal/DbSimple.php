@@ -35,6 +35,15 @@ trait DbSimple
      */
     protected $db;
 
+    /**
+     * Объект соединения модели (для escape(), транзакций и сырых запросов)
+     * @return DatabaseInterface|\Jam\DbSimple\Connect
+     */
+    public function getDb(): object
+    {
+        return $this->db;
+    }
+
     public function bootDBSimple()
     {
         $this->db = self::getDbConnection($this->jamConnection);

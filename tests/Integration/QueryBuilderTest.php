@@ -97,6 +97,12 @@ final class QueryBuilderTest extends DatabaseTestCase
         $this->assertSame([1 => 'alice@x.io', 2 => 'bob@x.io', 3 => 'carol@x.io'], User::instance()->column('email', 'id'));
     }
 
+    public function testSelectExpressionsWithCommas(): void
+    {
+        $rows = User::instance()->orderBy('id')->collectionRaw("id, COALESCE(NULL, name, email) AS label");
+        $this->assertSame(['Alice', 'Bob', 'Carol'], array_column($rows, 'label'));
+    }
+
     public function testRawAndSimpleCollections(): void
     {
         $raw = Post::instance()->id(1)->firstRaw();

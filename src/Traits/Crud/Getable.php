@@ -631,9 +631,12 @@ trait Getable
      */
     private function doGet($fields = null, $limit = null, $offset = null, $orderby = null)
     {
-        // Приводим перечисление полей к строке
+        // Приводим перечисление полей к массиву; запятые внутри скобок — часть выражения: COALESCE(a, b)
         if ($fields && !is_array($fields)) {
-            $fields = ArrayHelper::stringCommasToArray($fields);
+            $fields = array_values(array_filter(
+                array_map('trim', ArrayHelper::stringCommasToArrayCheckBraces($fields)),
+                static fn(string $field) => $field !== ''
+            ));
         }
         if ($this instanceof DummyModel) {
             $rows = $this->getDummyRows($this, $fields, $limit, $offset, $orderby);

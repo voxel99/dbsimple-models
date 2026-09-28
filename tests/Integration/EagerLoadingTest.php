@@ -119,9 +119,26 @@ final class EagerLoadingTest extends DatabaseTestCase
 
     public function testConditionReferencingParentRow(): void
     {
-        // this(field) подставляет значение поля родительской записи
+        // Автор поста 1 (Alice) комментирует свой пост; Bob — свой пост 3
+        (new Comment(['post_id' => 1, 'user_id' => 1, 'body' => 'Own comment']))->save();
+        (new Comment(['post_id' => 3, 'user_id' => 2, 'body' => 'Own comment too']))->save();
+
+        // this(field) — значение поля родительской записи: комментарии НЕ от автора поста
         $posts = Post::instance()->with('comments[user_id <> this(user_id)]')->orderBy('id')->all();
+
         $this->assertSame(['Nice', 'Spam'], $posts[0]->comments->column('body'));
+        $this->assertSame(['Привет'], $posts[2]->comments->column('body'));
+    }
+
+    public function testConditionReferencingParentRowEscapesValues(): void
+    {
+        (new Post(['user_id' => 1, 'title' => "O'Reilly"]))->save();
+        (new Comment(['post_id' => 4, 'user_id' => 1, 'body' => "O'Reilly"]))->save();
+        $this->resetQueryLog();
+
+        $post = Post::instance()->with('comments[body = this(title)]')->id(4)->first();
+
+        $this->assertSame(["O'Reilly"], $post->comments->column('body'));
     }
 
     public function testOrderAndKeyByFlags(): void
