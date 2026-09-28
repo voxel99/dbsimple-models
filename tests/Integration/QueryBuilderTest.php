@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Jam\Models\Tests\Integration;
 
+use Jam\Models\Storage\Criteria;
 use Jam\Models\Tests\Fixtures\Models\Post;
 use Jam\Models\Tests\Fixtures\Models\User;
 use Jam\Models\Tests\Support\DatabaseTestCase;
@@ -37,6 +38,45 @@ final class QueryBuilderTest extends DatabaseTestCase
             "SELECT `title` FROM posts WHERE (user_id = 1) AND (title LIKE 'B%') AND deleted_at IS NULL",
             $this->queries()[0]
         );
+    }
+
+    public function testArrayConditions(): void
+    {
+        $titles = Post::instance()
+            ->where(['user_id' => [1, 2], 'views' => ['>=' => 10]])
+            ->where(['title' => ['not like' => 'D%']])
+            ->orderBy('id')
+            ->column('title');
+
+        $this->assertSame(['Alpha', 'Beta', 'Gamma'], $titles);
+        $this->assertSame(
+            "SELECT `title` FROM posts WHERE (`user_id` IN (1, 2) AND `views` >= 10) AND (`title` NOT LIKE 'D%') AND deleted_at IS NULL ORDER BY `id`",
+            $this->queries()[0]
+        );
+    }
+
+    public function testArrayConditionsWithOrAliasAndMixedSql(): void
+    {
+        $ids = Post::instance()
+            ->alias('p')
+            ->join('users u ON u.id = p.user_id')
+            ->where([Criteria::OR => [['p.views' => 0], ['u.name' => 'Carol']]])
+            ->where('u.email LIKE ?', '%@x.io')
+            ->orderBy('p.id')
+            ->collection('p.*')
+            ->column('id');
+        $this->assertSame([4, 5], $ids);
+    }
+
+    public function testEmptyInListMatchesNothing(): void
+    {
+        $this->assertSame(0, Post::instance()->where(['id' => []])->count());
+    }
+
+    public function testExplicitDeletedAtConditionDisablesSoftDeleteFilter(): void
+    {
+        Post::instance()->id(1)->first()->delete();
+        $this->assertSame(['Alpha'], Post::instance()->where(['deleted_at' => ['!=' => null]])->column('title'));
     }
 
     public function testWhereInAndSkippedOptionalBlock(): void

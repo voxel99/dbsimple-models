@@ -110,7 +110,7 @@ final class CrudTest extends DatabaseTestCase
         $post->incByUpdate('views', 5);
 
         $this->assertSame(15, $post->views);
-        $this->assertQueryLogContains('SET `views` = `views`+5');
+        $this->assertQueryLogContains('SET `views` = `views` + 5');
     }
 
     public function testUpdateRaw(): void

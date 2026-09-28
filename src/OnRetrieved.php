@@ -104,7 +104,7 @@ class OnRetrieved
         }
         $pivot = $R->getPivot();
         $this->model->inheritModel($pivot);
-        return $pivot->where('?# IN (?a)', $pivotLocalKey, $values)->collection();
+        return $pivot->where([$pivotLocalKey => array_values($values)])->collection();
     }
 
     private function getPivotValues(Relation $R, ModelList $pivotList): array
@@ -178,7 +178,7 @@ class OnRetrieved
         /** @var Model $RelationModel */
         $RelationModel = new $class();
         $this->model->inheritModel($RelationModel);
-        $RelationModel->where('?# IN (?a)', $otherKey, $values->values);
+        $RelationModel->where([$otherKey => array_values($values->values)]);
         $with = $R->getWithArray();
         $fields = $R->getFields();
         $exclude = $R->getExclude();

@@ -34,11 +34,7 @@ trait Deletable
             }
         }
         if ($this->fire(Model::EVENT_DELETING, $this)) {
-            $stat = $this->db->query(
-                'DELETE FROM ?_' . $this->table() . ' WHERE ?# = ?',
-                $this->pk(),
-                $id
-            );
+            $stat = $this->storage()->delete($this, $id);
             $this->fire(Model::EVENT_DELETED, $this);
         }
         return $stat;
@@ -47,7 +43,7 @@ trait Deletable
     public function deleteListByPk(array $ids)
     {
         if ($ids) {
-            $recs = static::instance()->where('?# IN (?a)', $this->pk(), $ids)->collection();
+            $recs = static::instance()->where([$this->pk() => array_values($ids)])->collection();
             foreach ($recs as $rec) {
                 $rec->delete();
             }

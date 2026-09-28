@@ -3,14 +3,14 @@
 namespace Jam\Models\Traits\Crud;
 
 use Exception;
-use Jam\Models\DummyModel;
-use Jam\Models\DummyQuery;
 use Jam\Models\Model;
 use Jam\Models\ModelAbstract;
 use Jam\Models\ModelList;
 use Jam\Models\StringableInterface;
 use Jam\Models\Utils\ArrayHelper;
-use Jam\DbSimple\SubQuery;
+use Jam\Models\Storage\Criteria;
+use Jam\Models\Storage\Query;
+use Jam\Models\Storage\SqlStorage;
 
 trait Getable
 {
@@ -55,12 +55,6 @@ trait Getable
      */
     protected string $lock = '';
 
-    /**
-     * COUNT(), AVG(), MIN(), MAX()
-     * @var string
-     */
-    protected string $aggregateFunc = '';
-
     protected ?string $orderBy = null;
     protected ?int $limitValue = null;
     protected ?int $offsetValue = null;
@@ -69,10 +63,9 @@ trait Getable
      * Очищает переменные цепочки
      * @return $this
      */
-    public function clear($aggregateOnly = false)
+    public function clear($keepConditions = false)
     {
-        $this->aggregateFunc = '';
-        if (!$aggregateOnly) {
+        if (!$keepConditions) {
             $this->where = [];
             $this->joins = [];
             $this->leftJoins = [];
@@ -150,17 +143,25 @@ trait Getable
     }
 
     /**
-     * Задаёт условие выборки
+     * Задаёт условие выборки (несколько вызовов соединяются через AND).
      *
-     * У функции может быть множество параметров, например
-     * where('id=?d AND dt>NOW()-INTERVAL ?d DAY', $id, $period)
+     * Условие-массив — понятно любому хранилищу (SQL, DummyModel, ...), см. Storage\Criteria:
+     *   where(['user_id' => 5, 'status' => [1, 2], 'views' => ['>=' => 10]])
      *
-     * @param string $condition Условие выборки
+     * SQL-фрагмент с плейсхолдерами DbSimple — только для SQL-хранилища:
+     *   where('id = ?d AND dt > NOW() - INTERVAL ?d DAY', $id, $period)
+     *
+     * @param string|array<string, mixed>|Criteria|null $condition
      * @return static
      */
-    public function where(string|null $condition): static
+    public function where(string|array|Criteria|null $condition): static
     {
-        if ($condition) {
+        if (is_array($condition)) {
+            $condition = $condition ? new Criteria($condition) : null;
+        }
+        if ($condition instanceof Criteria) {
+            $this->where[] = $condition;
+        } elseif ($condition) {
             $this->where[] = func_get_args();
         }
         return $this;
@@ -211,282 +212,112 @@ trait Getable
         $this->where = $where;
     }
 
-    private function getWhereConditions()
-    {
-        $where = [];
-        if ($this->where) {
-            foreach ($this->where as $cond) {
-                $where[] = call_user_func_array([$this->db, 'subquery'], $cond)->get();
-            }
-        }
-        return $where;
-    }
-
     /**
-     * Получить фильтр модели в виде строки WHERE SQL-запроса
-     * @return string
+     * Получить фильтр модели в виде строки WHERE SQL-запроса (без фильтра SoftDeletes)
      */
     public function getWhereString(): string
     {
-        $where = $this->getWhereConditions();
-        $whereExpr = count($where) > 1
-            ? "(" . implode(") AND (", array_unique($where)) . ")"
-            : (
-            empty($where)
-                ? ''
-                : $where[0]
-            );
-        return $whereExpr;
+        return (new SqlStorage())->whereSql($this, new Query($this->table(), $this->alias, $this->where));
     }
 
     public function getWhereSubstitute()
     {
         $whereStr = $this->getWhereString();
-        return $whereStr ? $this->db->subquery($whereStr) : DBSIMPLE_SKIP;
+        return $whereStr ? $this->getDb()->subquery($whereStr) : DBSIMPLE_SKIP;
     }
 
-    private function strSubQuery($expr)
+    /**
+     * Колонка SoftDeletes, по которой нужно отсечь удалённые записи (null — не нужно).
+     * Условие зависит от трейта, а не от списка полей: список может быть урезан через
+     * cutFields()/with('rel(a,b)'). Явное условие по колонке отключает фильтр.
+     */
+    private function softDeleteColumnFilter(): ?string
     {
-        $sub = $expr instanceof SubQuery
-            ? $expr
-            : call_user_func_array([$this->db, 'subquery'], $expr);
-
-        return $sub->get();
-    }
-
-    private function escapeField($field)
-    {
-        if (
-            strpos($field, ' ') === false &&
-            strpos($field, '.') === false &&
-            strpos($field, '`') === false &&
-            strpos($field, '*') === false
-        ) {
-            $field = '`' . $field . '`';
-        }
-        return $field;
-    }
-
-    private function appendSoftDeleteWhere(string $where): string
-    {
-        // Условие зависит от трейта SoftDeletes, а не от списка полей: список может быть
-        // урезан через cutFields()/with('rel(a,b)'), и тогда удалённые записи попадали в выборку.
         if (!$this->useTrashed() || $this->collectionWithDeleted) {
-            return $where;
+            return null;
         }
-
         $column = $this->getDeletedAtColumn();
-        // Условие по колонке уже задано явно (например, выборка только удалённых)
-        if (strpos($where, $column) !== false) {
-            return $where;
-        }
-
-        return $where
-            . ($where ? " AND" : "")
-            . sprintf(" %s%s IS NULL", $this->alias ? $this->alias . "." : "", $column);
-    }
-
-    private function buildJoinsExpression(): string
-    {
-        $joins = [];
-        $joinPrefixes = [
-            'joins' => 'JOIN',
-            'leftJoins' => 'LEFT JOIN',
-            'rightJoins' => 'RIGHT JOIN'
-        ];
-
-        foreach (array_keys($joinPrefixes) as $joinType) {
-            if (!$this->{$joinType}) {
-                continue;
-            }
-
-            foreach ($this->{$joinType} as $join) {
-                if (!$join) {
-                    continue;
-                }
-
-                $joinString = $this->strSubQuery($join);
-                if (!$joinString) {
-                    continue;
-                }
-
-                $joins[] = $joinPrefixes[$joinType]
-                    . ' '
-                    . preg_replace('#^' . $joinPrefixes[$joinType] . '#i', '', $joinString);
+        foreach ($this->where as $condition) {
+            $mentioned = $condition instanceof Criteria
+                ? $condition->mentions($column)
+                : str_contains((string) $condition[0], $column);
+            if ($mentioned) {
+                return null;
             }
         }
-
-        return implode("\n", $joins);
+        return $column;
     }
 
     /**
-     * @return array{0: string|object|null, 1: string}
-     */
-    private function resolveOrderByParts($orderby): array
-    {
-        $orderbyDesc = '';
-
-        if (!$orderby) {
-            return [$orderby, $orderbyDesc];
-        }
-
-        if (is_object($orderby) && !empty($orderby->key)) {
-            $orderbyDesc = !empty($orderby->order) ? $orderby->order : '';
-            return [$orderby->key, $orderbyDesc];
-        }
-
-        // Составная сортировка «num, id» / «updated_at DESC, id DESC»: раньше
-        // резалась по первому пробелу → ORDER BY `num,` id (SQL-ошибка).
-        if (strpos($orderby, ',') !== false && strpos($orderby, '(') === false) {
-            return [$this->multiColumnOrderBy($orderby), ''];
-        }
-
-        if (strpos($orderby, ' ') !== false) {
-            [$orderby, $orderbyDesc] = explode(' ', $orderby, 2);
-        }
-
-        return [$orderby, $orderbyDesc];
-    }
-
-    /** Уже экранированный список колонок с направлениями. */
-    private function multiColumnOrderBy(string $orderby): string
-    {
-        $parts = [];
-        foreach (explode(',', $orderby) as $part) {
-            $tokens = preg_split('/\s+/', trim($part)) ?: [];
-            if (!$tokens || $tokens[0] === '') {
-                continue;
-            }
-            $direction = strtoupper($tokens[1] ?? '');
-            $parts[] = static::dbEsc($tokens[0]) . (in_array($direction, ['ASC', 'DESC'], true) ? ' ' . $direction : '');
-        }
-        return implode(', ', $parts);
-    }
-
-    /**
+     * Поля выборки: явно заданные или outFields; к ним добавляются локальные ключи связей из with().
+     *
      * @param array<int, string>|null $fields
-     * @return array<int, string>
+     * @return array<int, string>|null null — все поля
      */
-    private function resolveSelectedFields(?array $fields): array
+    private function resolveSelectedFields(?array $fields): ?array
     {
-        $fields ??= $this->outFields;
+        $fields = $fields ?: ($this->outFields ?: null);
         if (!$fields) {
-            return ['*'];
+            return null;
         }
-
-        $hasAsterisk = false;
         foreach ($fields as $field) {
             if ($field === '*' || ($this->alias && $field === $this->alias . '.*')) {
-                $hasAsterisk = true;
-                break;
+                return $fields;
             }
         }
 
-        if (!$hasAsterisk) {
-            $with = $this->getWithArray();
-            if (!empty($with)) {
-                $keyFields = [];
-                $alias = $this->getAlias();
-                foreach ($with as $withRelation) {
-                    if ($withRelation === self::EXPLICIT) {
-                        continue;
-                    }
-                    $keyFields[] = ($alias ? $alias . '.' : '') . $withRelation->localKey;
-                }
-                $fields = array_unique(array_merge($fields, $keyFields));
+        $alias = $this->getAlias();
+        foreach ($this->getWithArray() as $withRelation) {
+            if ($withRelation !== self::EXPLICIT) {
+                $fields[] = ($alias ? $alias . '.' : '') . $withRelation->localKey;
             }
         }
-
-        $selectedFields = [];
-        foreach ($fields as $field) {
-            $selectedFields[] = strpos($field, "*") !== false
-                ? $field
-                : $this->escapeField($field);
-        }
-
-        return $selectedFields;
-    }
-
-    private function normalizeSqlOperand(string $operand): string
-    {
-        return strpos($operand, '(') === false
-            ? static::dbEsc($operand)
-            : $operand;
-    }
-
-    private function getDummyRows(DummyModel $dummyModel, ?array $fields, $limit, $offset, $orderby)
-    {
-        return (new DummyQuery(static::class, $this->getFields()))
-            ->run($dummyModel->dummyRows(), $this->getWhereConditions(), $fields, $limit, $offset, $orderby);
+        return array_values(array_unique($fields));
     }
 
     /**
-     * Главная функция получения данных
+     * Снимок текущего состояния построителя для хранилища.
      *
-     * @param string|array $fields Не обязательный параметр. Поля (через запятую строкой или массивом) из таблицы
-     * @param integer $limit . Не обязательный параметр. Кол-во результирующих данных.
-     * @param integer $offset . Не обязательный параметр. Смещение от началы выборки.
-     * @param string $orderby . Сортировка
-     * @return array<int, array<string, mixed>> Результат выборки - array of database rows
-     *
-     * @throws Exception Если условие для выборки предварительно не задано
+     * @param string|array<int, string>|null $fields
      */
-    private function doGet($fields = null, $limit = null, $offset = null, $orderby = null)
+    public function buildQuery($fields = null, $limit = null, $offset = null, $orderby = null): Query
     {
-        // Приводим перечисление полей к массиву; запятые внутри скобок — часть выражения: COALESCE(a, b)
+        // Запятые внутри скобок — часть выражения: COALESCE(a, b)
         if ($fields && !is_array($fields)) {
             $fields = array_values(array_filter(
                 array_map('trim', ArrayHelper::stringCommasToArrayCheckBraces($fields)),
                 static fn(string $field) => $field !== ''
             ));
         }
-        if ($this instanceof DummyModel) {
-            $rows = $this->getDummyRows($this, $fields, $limit, $offset, $orderby);
-            $this->clear(!!$this->aggregateFunc || $this->persistent);
-            return $rows;
-        }
 
-        $where = $this->getWhereString();
-        $where = $this->appendSoftDeleteWhere($where);
-        $whereExpr = $where ? "WHERE " . $where : '';
-        $joinsExpr = $this->buildJoinsExpression();
-        [$orderby, $orderbyDesc] = $this->resolveOrderByParts($orderby);
+        return new Query(
+            table: $this->table(),
+            alias: (string) $this->alias,
+            where: $this->where,
+            fields: $this->resolveSelectedFields($fields ?: null),
+            joins: array_filter(['JOIN' => $this->joins, 'LEFT JOIN' => $this->leftJoins, 'RIGHT JOIN' => $this->rightJoins]),
+            groupBy: $this->groupBy,
+            orderBy: $orderby,
+            limit: $limit,
+            offset: $offset,
+            lock: $this->lock,
+            softDeleteColumn: $this->softDeleteColumnFilter(),
+        );
+    }
 
-        $asAlias = !empty($this->alias) ? " AS " . $this->alias : "";
-
+    /**
+     * Главная функция получения данных: строки «как в БД».
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function doGet($fields = null, $limit = null, $offset = null, $orderby = null)
+    {
         try {
-            $selectedFields = $this->resolveSelectedFields($fields);
-            $selectExpr = $this->aggregateFunc ?: implode(", ", $selectedFields);
-
-            if ($orderby && strpos($orderby, ',') === false) {
-                $orderby = $this->normalizeSqlOperand($orderby);
-            }
-
-            $groupBy = $this->groupBy;
-            if ($groupBy) {
-                $groupBy = $this->normalizeSqlOperand($groupBy);
-            }
-            // Делаем запрос
-            $rows = $this->db->select(
-                'SELECT '
-                . $selectExpr
-                . ' FROM ?_' . $this->table() . $asAlias
-                . ($joinsExpr ? ' ' . $joinsExpr : '')
-                . ($whereExpr ? ' ' . $whereExpr : '')
-                . ($groupBy ? ' GROUP BY ' . $groupBy : '')
-                . ($orderby ? ' ORDER BY ' . $orderby . ' ' . $orderbyDesc : '')
-                . '{ LIMIT ?d}{ OFFSET ?d}' . $this->lock,
-                // OFFSET без LIMIT — синтаксическая ошибка в MySQL и SQLite
-                $limit ?: ($offset ? PHP_INT_MAX : DBSIMPLE_SKIP),
-                $offset ?: DBSIMPLE_SKIP
-            );
+            return $this->storage()->select($this, $this->buildQuery($fields, $limit, $offset, $orderby));
         } finally {
-            // Очищаем переменные текущей цепочки
-            // Если задана агрегатная ф-ия, то чистим только её - из модели далее можно будет достать список
-            $this->clear(!!$this->aggregateFunc || $this->persistent);
+            // Очищаем переменные текущей цепочки (у персистентного построителя — нет)
+            $this->clear($this->persistent);
         }
-        // Возвращаем результат
-        return $rows ?: [];
     }
 
     public function retrieved(array $data)
@@ -801,25 +632,14 @@ trait Getable
         return $this->castSimpleRows($rows, $stringify);
     }
 
-    private function buildAggregateExpression(string $func, string $field): string
-    {
-        return sprintf($func . '(%s) AS aggregate', $this->escapeField($field));
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $rows
-     * @return mixed|null
-     */
-    private function extractAggregateResult(array $rows)
-    {
-        return $rows[0]['aggregate'] ?? null;
-    }
-
     private function aggregate($func, $field)
     {
-        $this->aggregateFunc = $this->buildAggregateExpression($func, $field);
-        $rows = $this->doGet(null);
-        return $this->extractAggregateResult($rows);
+        try {
+            return $this->storage()->aggregate($this, $this->buildQuery(), $func, $field);
+        } finally {
+            // Агрегат не сбрасывает условия: следом можно выбрать страницу теми же условиями
+            $this->clear(true);
+        }
     }
 
     private function aggregateNumeric(string $func, string $field): int|float

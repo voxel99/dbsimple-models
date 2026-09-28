@@ -16,6 +16,9 @@ use Jam\Models\Traits\Internal\DynamicProps;
 use Jam\Models\Traits\Internal\Relatable;
 use Jam\Models\Utils\ArrayHelper;
 use Jam\Models\Utils\Code;
+use Jam\Models\Storage\MemoryStorage;
+use Jam\Models\Storage\SqlStorage;
+use Jam\Models\Storage\StorageInterface;
 use ReflectionClass;
 use ReflectionMethod;
 use stdClass;
@@ -129,6 +132,9 @@ class Model extends ModelAbstract implements IRelationList
      */
     private static array $thisModelChecks = [];
 
+    /** @var array<class-string, StorageInterface> */
+    private static array $storages = [];
+
     /**
      * Массив для связывания нестандартных методов-описателей полей и их идентификаторов
      * @var array
@@ -194,6 +200,24 @@ class Model extends ModelAbstract implements IRelationList
     {
         $this->persistent = $flag;
         return $this;
+    }
+
+    /**
+     * Хранилище модели. Экземпляры хранилищ не имеют состояния и кэшируются по классу.
+     */
+    public function storage(): StorageInterface
+    {
+        return self::$storages[static::class] ??= $this->createStorage();
+    }
+
+    /**
+     * Точка расширения: какое хранилище использует модель. По умолчанию — SQL через DbSimple,
+     * для DummyModel — строки в памяти. Модель на другом хранилище (например, MongoDB)
+     * переопределяет этот метод.
+     */
+    protected function createStorage(): StorageInterface
+    {
+        return $this instanceof DummyModel ? new MemoryStorage() : new SqlStorage();
     }
 
     /**
@@ -314,21 +338,14 @@ class Model extends ModelAbstract implements IRelationList
                 foreach ($oldItemIds as $className => $ids) {
                     if (!empty($ids)) {
                         if ($pivot) {
-                            $pivot->where(
-                                '?# = ? AND ?# IN (?a)',
-                                $R->pivotLocalKey(),
-                                $thisId,
-                                $R->pivotOtherKey(),
-                                $ids
-                            )->collection()->delete();
+                            $pivot->where([
+                                $R->pivotLocalKey() => $thisId,
+                                $R->pivotOtherKey() => array_values($ids),
+                            ])->collection()->delete();
                         } else {
                             /** @var Model $relObject */
                             $relObject = new $className();
-                            $relObject->where(
-                                '?# IN (?a)',
-                                $relObject->pk(),
-                                $ids
-                            )->collection()->delete();
+                            $relObject->where([$relObject->pk() => array_values($ids)])->collection()->delete();
                         }
                     }
                 }
@@ -414,10 +431,10 @@ class Model extends ModelAbstract implements IRelationList
      * [удаление отвязанных записей при SAVE_USE_CHECK_OLD] -> has-связи и pivot-строки.
      *
      * @param array<string, mixed> $params SAVE_USE_* и параметры для связей: [alias => [...], SAVE_PARAMS_ALL => [...]]
-     * @return int ID записи
+     * @return int|string ID записи (строка — для нечисловых ключей: строковый pk, ObjectId в MongoDB)
      * @throws ModelException
      */
-    public function save(array $params = [], bool $saveRelations = true): int
+    public function save(array $params = [], bool $saveRelations = true): int|string
     {
         $options = $this->resolveSaveOptions($params);
 
@@ -437,7 +454,7 @@ class Model extends ModelAbstract implements IRelationList
         if ($saveRelations) {
             $this->saveHasRelations($options[self::SAVE_USE_INSERT]);
         }
-        return (int) $newId;
+        return is_numeric($newId) ? (int) $newId : $newId;
     }
 
     /**
@@ -612,34 +629,21 @@ class Model extends ModelAbstract implements IRelationList
         ) {
             $data[$instance->columnUpdated] = static::freshTimestamp();
         }
-        return $instance->db->query(
-            'UPDATE ?# SET ?a WHERE ?# IN (?a)',
-            "?_" . $instance->table(),
-            $data,
-            $instance->pk(),
-            (array)$id
-        );
+        return $instance->storage()->update($instance, (array) $id, $data);
     }
 
+    /**
+     * Upsert списка строк одним запросом, без событий и моделей (MySQL: ON DUPLICATE KEY UPDATE).
+     *
+     * @param array<int, array<string, mixed>> $ins
+     */
     public static function insertOnDuplicateKeyUpdateRaw(array $ins): int
     {
-        $instance = static::instance();
-        $duplicateArr = [];
-        if (!empty($ins[0])) {
-            foreach ($ins[0] as $f => $v) {
-                if ($f !== $instance->pk()) {
-                    $duplicateArr[] = '`' . $f . '` = VALUES(`' . $f . '`)';
-                }
-            }
-
-            return $instance->db->query(
-                'INSERT INTO ?# (?#) VALUES (?a) ON DUPLICATE KEY UPDATE ' . implode(", ", $duplicateArr),
-                "?_" . $instance->table(),
-                array_keys($ins[0]),
-                array_values($ins)
-            );
+        if (empty($ins[0])) {
+            return 0;
         }
-        return 0;
+        $instance = static::instance();
+        return (int) $instance->storage()->insert($instance, array_values($ins), false, true);
     }
 
     public static function createOrUpdate(array|object $data): bool

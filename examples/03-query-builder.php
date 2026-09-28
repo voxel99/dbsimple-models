@@ -8,7 +8,8 @@
  * и СБРАСЫВАЮТ состояние. Исключение — агрегаты (count/sum/...): они сбрасывают только себя,
  * чтобы можно было посчитать total и затем выбрать страницу теми же условиями.
  *
- * Условия пишутся на SQL с плейсхолдерами DbSimple:
+ * Условия задаются массивом (работает в любом хранилище — SQL, DummyModel, своё; см. 11-custom-storage.php)
+ * или SQL-фрагментом с плейсхолдерами DbSimple (только SQL-хранилище):
  *   ?  — строка/число с экранированием     ?d — целое      ?f — дробное
  *   ?# — идентификатор (колонка/таблица)    ?a — массив (IN-список или SET a=1, b=2)
  *   ?s — подзапрос (Model::subquery)         {...} — блок выпадает, если значение DBSIMPLE_SKIP
@@ -17,11 +18,23 @@
 declare(strict_types=1);
 
 use Jam\Models\Examples\Models\Post;
+use Jam\Models\Storage\Criteria;
 use Jam\Models\Examples\Models\User;
 
 require __DIR__ . '/bootstrap.php';
 examples_connect();
 examples_seed();
+
+section('where() массивом: =, IN, IS NULL, операторы, OR');
+$titles = Post::instance()
+    ->where([
+        'user_id' => [1, 2],                       // IN (1, 2)
+        'views' => ['>=' => 50, '<' => 400],       // несколько операторов по полю
+        Criteria::OR => [['status' => 1], ['title' => ['like' => '%index%']]],
+    ])
+    ->orderBy('id')
+    ->column('title');
+show('titles', $titles);
 
 section('where() + плейсхолдеры; несколько where соединяются через AND');
 $titles = Post::instance()
