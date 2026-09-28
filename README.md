@@ -127,6 +127,35 @@ $user->update('first_name');
 
 ---
 
+## Storage backends
+
+A model delegates reading and writing rows to a storage (`Jam\Models\Storage\StorageInterface`:
+`select`, `aggregate`, `insert`, `update`, `increment`, `delete`). Fields, casting, relations,
+events and `toArray()` stay in the model.
+
+| Storage | Used by | Conditions |
+|---------|---------|------------|
+| `SqlStorage` | every model by default (DbSimple: MySQL, PostgreSQL, SQLite) | array conditions and SQL fragments |
+| `MemoryStorage` | `DummyModel` (read-only lists defined in code) | array conditions, simple SQL (`=`, `IN`) |
+| your own | a model overriding `createStorage()` | array conditions |
+
+Array conditions are storage-independent:
+
+```php
+Post::instance()->where([
+    'user_id' => [1, 2],                      // IN
+    'views' => ['>=' => 10],
+    'deleted_at' => null,                     // IS NULL
+    Criteria::OR => [['pinned' => 1], ['title' => ['like' => 'PHP%']]],
+])->all();
+```
+
+Eager loading only needs "rows where key IN (...)" from each storage, so relations work across
+storages (a SQL model can `hasMany` models kept elsewhere and vice versa) — see
+[`examples/11-custom-storage.php`](examples/11-custom-storage.php) and the reference in-memory
+implementation in [`tests/Support/ArrayStorage.php`](tests/Support/ArrayStorage.php).
+SQL fragments, joins, `GROUP BY` and locks remain SQL-only.
+
 ## Documentation by example
 
 The [`examples/`](examples) directory contains runnable scripts (in-memory SQLite, nothing to set up)

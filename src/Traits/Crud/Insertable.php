@@ -22,19 +22,7 @@ trait Insertable
             return 0;
         }
 
-        $fields = array_keys($rows[0]);
-        $sql = 'INSERT ' . ($ignore ? 'IGNORE ' : '')
-            . 'INTO ?_' . $this->table()
-            . ' (?#) VALUES (?a)'
-            . ($on_duplicate_key_update ? $this->onDuplicateKeyUpdateExpression($fields, $rows[0]) : '');
-
-        if ($on_duplicate_key_update) {
-            $this->db->query('SET SESSION sql_mode = "NO_ENGINE_SUBSTITUTION"');
-        }
-        $id = $this->db->query($sql, $fields, $isMulti ? array_values($rows) : array_values($rows[0]));
-        if ($on_duplicate_key_update) {
-            $this->db->query('SET SESSION sql_mode = @@GLOBAL.sql_mode');
-        }
+        $id = $this->storage()->insert($this, array_values($rows), (bool) $ignore, (bool) $on_duplicate_key_update);
 
         if (!$isMulti) {
             // Для ключа, заданного явно (в т.ч. строкового), lastInsertId() не информативен
@@ -63,27 +51,6 @@ trait Insertable
             $rows[$k] = static::convertRecordsBeforeSaveToDb($row);
         }
         return $rows;
-    }
-
-    /**
-     * @param array<int, string> $fields
-     * @param array<string, mixed> $firstRow
-     */
-    private function onDuplicateKeyUpdateExpression(array $fields, array $firstRow): string
-    {
-        $parts = array_map(static fn($f) => '`' . $f . '` = VALUES(`' . $f . '`)', $fields);
-
-        // Если строка обновилась, LAST_INSERT_ID() не информативен; LAST_INSERT_ID(pk) заставляет
-        // его вернуть id существующей строки (см. документацию MySQL по INSERT ... ON DUPLICATE KEY UPDATE).
-        // Только для числовых ключей: для строкового ключа LAST_INSERT_ID('abc') = 0 и ключ строки
-        // перезаписывался нулём.
-        $pk = $this->pk();
-        $pkValue = $firstRow[$pk] ?? null;
-        if ($pkValue === null || is_numeric($pkValue)) {
-            $parts[] = '`' . $pk . '` = LAST_INSERT_ID(`' . $pk . '`)';
-        }
-
-        return ' ON DUPLICATE KEY UPDATE ' . implode(', ', $parts);
     }
 
     public function doInsert($ignore = false, $on_duplicate_key_update = false)

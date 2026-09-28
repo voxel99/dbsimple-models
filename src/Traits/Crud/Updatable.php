@@ -33,32 +33,21 @@ trait Updatable
             // Первичный ключ не обновляем; если кроме него менять нечего — запроса нет
             unset($upd[$this->pk]);
             if ($upd) {
-                // `?`, а не `?d`: первичный ключ может быть строковым
-                $this->db->query(
-                    'UPDATE ?_'
-                    . $this->table()
-                    . ' SET ?a WHERE ?# = ?',
-                    $upd,
-                    $this->pk(),
-                    $id
-                );
+                $this->storage()->update($this, $id, $upd);
                 $this->fire(Model::EVENT_UPDATED, $id, $upd);
             }
         }
         return $id;
     }
 
+    /**
+     * Атомарно увеличить поле в БД (field = field + $value) и в модели.
+     * Параметр $delayed устарел и игнорируется: UPDATE DELAYED в MySQL не существует.
+     */
     public function incByUpdate($field, $value = 1, $delayed = false)
     {
-        $id = $this->{$this->pk};
-        $this->db->query(
-            'UPDATE ' . ($delayed ? 'DELAYED ' : '') . '?_' . $this->table() . ' SET ?# = ?#+?d WHERE ?# = ?',
-            $field,
-            $field,
-            $value,
-            $this->pk(),
-            $id
-        );
+        $this->assertWritable();
+        $this->storage()->increment($this, $this->{$this->pk}, $field, $value);
         $this->{$field} = $this->{$field} + $value;
     }
 

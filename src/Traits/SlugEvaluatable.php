@@ -120,7 +120,7 @@ trait SlugEvaluatable
             $this->columnSlugIndex
         );
 
-        $usedIndexes = $this->db->selectCol(
+        $usedIndexes = $this->getDb()->selectCol(
             $sql,
             $hash,
             !empty($this->{$this->pk()}) ? $this->{$this->pk()} : DBSIMPLE_SKIP
@@ -161,7 +161,7 @@ trait SlugEvaluatable
             $this->pk()
         );
 
-        return (bool) $this->db->selectCell(
+        return (bool) $this->getDb()->selectCell(
             $sql,
             $slug,
             !empty($this->{$this->pk()}) ? $this->{$this->pk()} : DBSIMPLE_SKIP

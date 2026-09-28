@@ -2,13 +2,14 @@
 
 namespace Jam\Models;
 
+use Jam\Models\Storage\Criteria;
 use Jam\Models\Utils\ArrayHelper;
 
 /**
  * Выполнение where/orderBy/limit/offset над строками DummyModel::dummyRows() в памяти.
  *
- * Поддерживаются условия вида `field = value`, `field IN (a, b)` и их комбинации
- * через AND или OR (но не одновременно).
+ * Условия-массивы (Criteria) поддерживаются полностью. Из SQL-условий — только вида
+ * `field = value`, `field IN (a, b)` и их комбинации через AND или OR (но не одновременно).
  */
 final class DummyQuery
 {
@@ -24,14 +25,16 @@ final class DummyQuery
 
     /**
      * @param array<int, array<string, mixed>> $rows
-     * @param array<int, string> $whereConditions Условия с уже подставленными плейсхолдерами
+     * @param array<int, string|Criteria> $whereConditions Условия-массивы или SQL с подставленными значениями
      * @param array<int, string>|null $fields
      * @return array<int, array<string, mixed>>
      */
     public function run(array $rows, array $whereConditions, ?array $fields, $limit, $offset, $orderby): array
     {
         foreach ($whereConditions as $where) {
-            $rows = $this->filterRows($rows, $where);
+            $rows = $where instanceof Criteria
+                ? array_values(array_filter($rows, [$where, 'matches']))
+                : $this->filterRows($rows, $where);
         }
 
         $rows = $this->orderRows($rows, $orderby);

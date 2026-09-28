@@ -2,13 +2,15 @@
 
 namespace Jam\Models\Traits;
 
+use Jam\Models\Storage\Criteria;
+
 trait Slugable
 {
     protected string $columnSlug = 'slug';
 
     public function findByIdOrSlug($value)
     {
-        return $this->where('?#=? OR ?#=?', $this->pk(), $value, $this->columnSlug, $value)->first();
+        return $this->idOrSlug($value)->first();
     }
 
     public function findSlugById($id)
@@ -18,7 +20,7 @@ trait Slugable
 
     public function findIdBySlug($slug)
     {
-        return $this->where('?# = ?', $this->columnSlug, $slug)->value($this->pk());
+        return $this->where([$this->columnSlug => $slug])->value($this->pk());
     }
 
     /**
@@ -26,17 +28,12 @@ trait Slugable
      */
     public function idOrSlug($value)
     {
-        return $this->where(
-            sprintf(
-                '(%s?# IN (?a)) OR (%s?# IN (?a))',
-                $this->alias ? $this->alias . "." : "",
-                $this->alias ? $this->alias . "." : "",
-            ),
-            $this->pk(),
-            (array) $value,
-            $this->columnSlug,
-            (array) $value
-        );
+        $prefix = $this->alias ? $this->alias . '.' : '';
+        $values = array_values((array) $value);
+        return $this->where([Criteria::OR => [
+            [$prefix . $this->pk() => $values],
+            [$prefix . $this->columnSlug => $values],
+        ]]);
     }
 
     public static function getByIdOrSlug($value)

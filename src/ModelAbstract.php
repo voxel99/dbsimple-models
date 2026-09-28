@@ -89,7 +89,11 @@ abstract class ModelAbstract
      */
     public function inheritModel(ModelAbstract $M, $inheritWith = false): void
     {
-        $M->db($this->jamConnection);
+        if (static::hasDbConnection($this->jamConnection)) {
+            $M->db($this->jamConnection);
+        } else {
+            $M->setState(['jamConnection' => $this->jamConnection]);
+        }
         if ($inheritWith) {
             $M->setState(['with' => $this->with]);
         }

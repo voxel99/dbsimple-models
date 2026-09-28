@@ -28,6 +28,13 @@ final class DummyModelTest extends ModelTestCase
         $this->assertSame(['editor'], Role::instance()->where("id = 2 AND code = 'editor'")->column('code'));
     }
 
+    public function testArrayConditionsAndAggregates(): void
+    {
+        $this->assertSame(['editor', 'viewer'], Role::instance()->where(['code' => ['like' => '%e%'], 'id' => ['>' => 1]])->column('code'));
+        $this->assertSame(2, Role::instance()->where(['id' => ['!=' => 1]])->count());
+        $this->assertSame(3, Role::instance()->max('id'));
+    }
+
     public function testOrderLimitOffset(): void
     {
         $this->assertSame([3, 2], Role::instance()->orderBy('id DESC')->limit(2)->column('id'));

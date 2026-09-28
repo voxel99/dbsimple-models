@@ -41,12 +41,22 @@ trait DbSimple
      */
     public function getDb(): object
     {
-        return $this->db;
+        return $this->db ?? self::getDbConnection($this->jamConnection);
     }
 
+    /**
+     * Соединение подхватывается при создании модели, если оно зарегистрировано.
+     * Модели на не-SQL хранилище (см. Model::createStorage()) SQL-соединение не нужно,
+     * поэтому его отсутствие — ошибка только при первом обращении к БД (getDb()).
+     */
     public function bootDBSimple()
     {
-        $this->db = self::getDbConnection($this->jamConnection);
+        $this->db = self::$dbList[$this->jamConnection] ?? null;
+    }
+
+    public static function hasDbConnection(string $connection): bool
+    {
+        return isset(self::$dbList[$connection]);
     }
 
     /**

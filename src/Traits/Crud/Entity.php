@@ -40,17 +40,11 @@ trait Entity
      */
     public function id($id)
     {
-        $pk = sprintf('`%s`', $this->pk);
-        if ($this->alias) {
-            $pk = $this->alias . '.' . $pk;
-        }
-
+        $pk = ($this->alias ? $this->alias . '.' : '') . $this->pk;
         if (is_array($id)) {
-            $this->where($pk . ' IN (?a)', $id);
-        } else {
-            $this->{$this->pk} = $id;
-            $this->where($pk . ' = ?', $id);
+            return $this->where([$pk => array_values($id)]);
         }
-        return $this;
+        $this->{$this->pk} = $id;
+        return $this->where([$pk => $id]);
     }
 }
