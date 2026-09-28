@@ -4,17 +4,18 @@ namespace Jam\Models\Traits\Crud;
 
 use Exception;
 use Jam\Models\Model;
-use Jam\Models\ModelList;
 use Jam\Models\ModelException;
 use Jam\Models\OnRetrieved;
 use Jam\Models\Relation;
 use Jam\Models\Utils\ArrayHelper;
-use Jam\Models\Utils\Code;
 use Jam\Models\Utils\Strings;
-use Jam\Models\StringableInterface;
 
 trait Withable
 {
+    /** Скобки with-выражения: (поля), [условие], ^исключения^ */
+    private const WITH_OPENING_BRACES = ["(", "[", "^"];
+    private const WITH_CLOSING_BRACES = [")", "]", "^"];
+
     /**
      * @param array<string, mixed> $withData
      * @return array{
@@ -54,19 +55,22 @@ trait Withable
         });
     }
 
+    /**
+     * Убрать связи из with (без аргументов — все)
+     * @param string|array<int, string> $relations
+     * @return $this
+     */
     public function without($relations = '')
     {
-        if ($relations && !is_array($relations)) {
+        if (!$relations) {
+            $this->with = [];
+            return $this;
+        }
+        if (!is_array($relations)) {
             $relations = ArrayHelper::stringCommasToArray($relations);
         }
-        if ($relations) {
-            foreach ($relations as $relation => $data) {
-                if (isset($this->with[$relation])) {
-                    unset($this->with[$relation]);
-                }
-            }
-        } else {
-            $this->with = [];
+        foreach ($relations as $alias) {
+            unset($this->with[$alias]);
         }
         return $this;
     }
@@ -79,7 +83,8 @@ trait Withable
     {
         $parsed = [];
 
-        foreach (Strings::reSplitOutBraces($classesExpression, ",") as $classStr) {
+        // Запятые внутри (полей), [условий] и ^исключений^ не разделяют отношения
+        foreach (Strings::reSplitOutBraces($classesExpression, ",", self::WITH_OPENING_BRACES, self::WITH_CLOSING_BRACES) as $classStr) {
             $this->appendStringWithRelation($parsed, $classStr, $classesExpression);
         }
 
@@ -93,7 +98,8 @@ trait Withable
     private function appendStringWithRelation(array &$parsed, string $classStr, string $classesExpression): void
     {
         $with = &$parsed;
-        $parts = explode(".", $classStr);
+        // Точка внутри [условия] (например, rating > 1.5) не является разделителем вложенности
+        $parts = explode("\0", Strings::replaceOutBraces($classStr, ".", "\0", self::WITH_OPENING_BRACES, self::WITH_CLOSING_BRACES));
 
         foreach ($parts as $indexDeep => $partsStr) {
             if (empty($partsStr)) {
@@ -140,7 +146,8 @@ trait Withable
                 : $withData
         );
 
-        $merged["flags"] = array_unique($merged["flags"], SORT_REGULAR);
+        // Флаги — ассоциативный массив «буква => значение», уникальность обеспечена ключами.
+        // array_unique здесь нельзя: true == 'id' при нестрогом сравнении, и :p:o(id) терял флаг o.
         $merged["fields"] = array_values(array_unique($merged["fields"]));
         $merged["exclude"] = array_values(array_unique($merged["exclude"]));
         $merged["where"] = array_values(array_unique($merged["where"]));

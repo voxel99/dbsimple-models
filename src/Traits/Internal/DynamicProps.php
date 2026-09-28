@@ -9,7 +9,6 @@ use Jam\Models\ModelList;
 use Jam\Models\Utils\ArrayHelper;
 use Jam\Models\ModelException;
 use Jam\Models\Utils\CamelCase;
-use Jam\Models\Utils\Strings;
 use stdClass;
 
 trait DynamicProps
@@ -362,6 +361,7 @@ trait DynamicProps
         }
 
         $this->storeDynamicAssignedValue($jsonField, $payload, CastClosure::CAST_EXTERNAL);
+        $this->forgetComputedValues();
         $this->callChangeThisMethod($jsonField);
     }
 
@@ -470,7 +470,24 @@ trait DynamicProps
         $value = $this->applyDynamicChangeMethod($prop, $value, $dataLayer);
         $value = $this->normalizeRelationAssignedValue($prop, $value, $map);
         $this->storeDynamicAssignedValue($prop, $value, $dataLayer);
+        $this->forgetComputedValues();
         $this->callChangeThisMethod($prop);
+    }
+
+    /**
+     * Сбрасывает закэшированные значения вычислимых полей: после изменения данных модели
+     * $model->computed_prop должен пересчитываться, а не возвращать устаревшее значение.
+     * Updatable- и explicit-поля не трогаем — их значения могут быть присвоены явно.
+     */
+    private function forgetComputedValues(): void
+    {
+        $computed = $this->getComputed();
+        if (!$computed) {
+            return;
+        }
+        foreach (array_diff($computed, $this->getUpdatable(), $this->getExplicit()) as $prop) {
+            unset($this->jamDataEx[$prop]);
+        }
     }
 
     /**
@@ -480,10 +497,7 @@ trait DynamicProps
      */
     public function getFields()
     {
-        if (!$this->jamFields) {
-            $this->jamFields = ArrayHelper::stringCommasToArray($this->fields);
-        }
-        return $this->jamFields;
+        return $this->lazyFieldList($this->jamFields, $this->fields);
     }
 
     /**
@@ -493,42 +507,27 @@ trait DynamicProps
      */
     public function getGuarded()
     {
-        if (!$this->jamGuarded) {
-            $this->jamGuarded = ArrayHelper::stringCommasToArray($this->guarded);
-        }
-        return $this->jamGuarded;
+        return $this->lazyFieldList($this->jamGuarded, $this->guarded);
     }
 
     public function getHidden()
     {
-        if (!$this->jamHidden) {
-            $this->jamHidden = ArrayHelper::stringCommasToArray($this->hidden);
-        }
-        return $this->jamHidden;
+        return $this->lazyFieldList($this->jamHidden, $this->hidden);
     }
 
     public function getComputed()
     {
-        if (!$this->jamComputed) {
-            $this->jamComputed = ArrayHelper::stringCommasToArray($this->computed);
-        }
-        return $this->jamComputed;
+        return $this->lazyFieldList($this->jamComputed, $this->computed);
     }
 
     public function getExplicit(): array
     {
-        if (!$this->jamExplicit) {
-            $this->jamExplicit = ArrayHelper::stringCommasToArray($this->explicit);
-        }
-        return $this->jamExplicit;
+        return $this->lazyFieldList($this->jamExplicit, $this->explicit);
     }
 
     public function getExtra()
     {
-        if (!$this->jamExtra) {
-            $this->jamExtra = ArrayHelper::stringCommasToArray($this->extra);
-        }
-        return $this->jamExtra;
+        return $this->lazyFieldList($this->jamExtra, $this->extra);
     }
 
     public function getService()
@@ -542,42 +541,46 @@ trait DynamicProps
         return $this->jamService;
     }
 
-    private function isFieldType($field, $type)
+    /**
+     * Список полей из строки-свойства модели ('id, name'), разбирается один раз.
+     * @return array<int, string>
+     */
+    private function lazyFieldList(array &$cache, string $source): array
     {
-        return in_array($field, $this->{"get" . ucfirst($type)}());
+        if (!$cache) {
+            $cache = ArrayHelper::stringCommasToArray($source);
+        }
+        return $cache;
     }
 
     public function isField($field)
     {
-        return $this->isFieldType($field, "fields");
+        return in_array($field, $this->getFields());
     }
 
     public function isGuarded($field)
     {
-        return $this->isFieldType($field, "guarded");
+        return in_array($field, $this->getGuarded());
     }
 
     public function isHidden($field)
     {
-        return $this->isFieldType($field, "hidden");
+        return in_array($field, $this->getHidden());
     }
 
     public function isComputed($field)
     {
-        return $this->isFieldType($field, "computed");
+        return in_array($field, $this->getComputed());
     }
 
     public function isExtra($field)
     {
-        return $this->isFieldType($field, "extra");
+        return in_array($field, $this->getExtra());
     }
 
     public function getUpdatable()
     {
-        if (!$this->jamUpdatable) {
-            $this->jamUpdatable = ArrayHelper::stringCommasToArray($this->updatable);
-        }
-        return $this->jamUpdatable;
+        return $this->lazyFieldList($this->jamUpdatable, $this->updatable);
     }
 
     public function getType($field)
@@ -820,7 +823,8 @@ trait DynamicProps
         if (!is_array($excludes)) {
             $excludes = ArrayHelper::stringCommasToArray($excludes);
         }
-        $this->jamFields = array_diff($this->jamFields, $excludes);
+        // getFields(), а не $this->jamFields: список полей инициализируется лениво
+        $this->jamFields = array_values(array_diff($this->getFields(), $excludes));
         foreach ($excludes as $excludeField) {
             if (isset($this->jamDataDb[$excludeField])) {
                 unset($this->jamDataDb[$excludeField]);

@@ -3,45 +3,14 @@
 namespace Jam\Models\Traits\Crud;
 
 use Exception;
-use Jam\Models\DummyModel;
 use Jam\Models\Model;
-use Jam\Models\ModelException;
 use Jam\Models\Utils\ArrayHelper;
-use Jam\Models\Utils\Code;
 
 trait Updatable
 {
-/*
-    public function replace(array $ins) {
-        if (Code::isImplements($this, DummyModel::class)) {
-            throw new ModelException('DummyModel is readonly');
-        }
-
-        if (isset($ins[0])) {
-            foreach ($ins as $k => $_ins) {
-                $ins[$k] = static::convertRecordsBeforeSaveToDb($_ins);
-            }
-            $fields = array_keys($ins[0]);
-            $values = array_values($ins);
-        } else {
-            $ins = static::convertRecordsBeforeSaveToDb($ins);
-            $fields = array_keys($ins);
-            $values = array_values($ins);
-        }
-
-        $sql = 'REPLACE INTO ?_' . $this->table() . ' (?#) VALUES (?a)';
-        $this->db->query(
-            $sql,
-            $fields,
-            $values
-        );
-    }
-*/
     public function update($fields = "")
     {
-        if (Code::isImplements($this, DummyModel::class)) {
-            throw new ModelException('DummyModel is readonly');
-        }
+        $this->assertWritable();
         $id = $this->{$this->pk};
         $upd = $this->toArray([
             self::FLAG_DEPENDENCIES => false,
@@ -61,12 +30,14 @@ trait Updatable
         $skipUpdate = !empty($upd[static::SKIP_UPDATE]) && $upd[static::SKIP_UPDATE] === static::SKIP_UPDATE;
         if (!$skipUpdate) {
             $upd = static::convertRecordsBeforeSaveToDb($upd);
+            // Первичный ключ не обновляем; если кроме него менять нечего — запроса нет
+            unset($upd[$this->pk]);
             if ($upd) {
-                unset($upd[$this->pk]);
+                // `?`, а не `?d`: первичный ключ может быть строковым
                 $this->db->query(
                     'UPDATE ?_'
                     . $this->table()
-                    . ' SET ?a WHERE ?# = ?d',
+                    . ' SET ?a WHERE ?# = ?',
                     $upd,
                     $this->pk(),
                     $id
@@ -81,7 +52,7 @@ trait Updatable
     {
         $id = $this->{$this->pk};
         $this->db->query(
-            'UPDATE ' . ($delayed ? 'DELAYED ' : '') . '?_' . $this->table() . ' SET ?# = ?#+?d WHERE ?# = ?d',
+            'UPDATE ' . ($delayed ? 'DELAYED ' : '') . '?_' . $this->table() . ' SET ?# = ?#+?d WHERE ?# = ?',
             $field,
             $field,
             $value,

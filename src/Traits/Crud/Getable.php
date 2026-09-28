@@ -4,9 +4,9 @@ namespace Jam\Models\Traits\Crud;
 
 use Exception;
 use Jam\Models\DummyModel;
+use Jam\Models\DummyQuery;
 use Jam\Models\Model;
 use Jam\Models\ModelAbstract;
-use Jam\Models\ModelException;
 use Jam\Models\ModelList;
 use Jam\Models\StringableInterface;
 use Jam\Models\Utils\ArrayHelper;
@@ -78,7 +78,11 @@ trait Getable
             $this->leftJoins = [];
             $this->rightJoins = [];
             $this->lock = '';
+            $this->groupBy = '';
             $this->orderBy = null;
+            if ($this->useTrashed()) {
+                $this->collectionWithDeleted = false;
+            }
             $this->limitValue = null;
             $this->offsetValue = null;
         }
@@ -162,50 +166,39 @@ trait Getable
         return $this;
     }
 
-    private function addJoins(array $expression, $field = "joins"): static
+    /**
+     * @param 'joins'|'leftJoins'|'rightJoins' $field
+     * @param array<int, mixed> $args Аргументы join(): строка с плейсхолдерами и значения,
+     *                                либо один массив готовых выражений
+     */
+    private function addJoin(string $field, array $args): static
     {
+        $expression = $args[0] ?? null;
         if ($expression) {
-            $this->{$field} = array_merge($this->{$field}, $expression);
+            $this->{$field} = array_merge($this->{$field}, is_array($expression) ? $expression : [$args]);
         }
         return $this;
     }
 
     public function join(array|string|null $expression): static
     {
-        if ($expression) {
-            if (!is_array($expression)) {
-                $expression = [func_get_args()];
-            }
-            return $this->addJoins($expression);
-        }
-        return $this;
+        return $this->addJoin('joins', func_get_args());
     }
 
     public function leftJoin(array|string|null $expression): static
     {
-        if ($expression) {
-            if (!is_array($expression)) {
-                $expression = [func_get_args()];
-            }
-            return $this->addJoins($expression, "leftJoins");
-        }
-        return $this;
+        return $this->addJoin('leftJoins', func_get_args());
     }
 
     public function rightJoin(array|string|null $expression): static
     {
-        if ($expression) {
-            if (!is_array($expression)) {
-                $expression = [func_get_args()];
-            }
-            return $this->addJoins($expression, "rightJoins");
-        }
-        return $this;
+        return $this->addJoin('rightJoins', func_get_args());
     }
 
-    public function groupBy(string $groupBy)
+    public function groupBy(string $groupBy): static
     {
         $this->groupBy = $groupBy;
+        return $this;
     }
 
     public function getWhere()
@@ -254,7 +247,7 @@ trait Getable
 
     private function strSubQuery($expr)
     {
-        $sub = is_object($expr) && get_class($expr) === SubQuery::class
+        $sub = $expr instanceof SubQuery
             ? $expr
             : call_user_func_array([$this->db, 'subquery'], $expr);
 
@@ -274,22 +267,23 @@ trait Getable
         return $field;
     }
 
-    private function appendSoftDeleteWhere(string $where, array $allFields): string
+    private function appendSoftDeleteWhere(string $where): string
     {
-        if (!in_array($this->columnDeleted, $allFields)) {
+        // Условие зависит от трейта SoftDeletes, а не от списка полей: список может быть
+        // урезан через cutFields()/with('rel(a,b)'), и тогда удалённые записи попадали в выборку.
+        if (!$this->useTrashed() || $this->collectionWithDeleted) {
             return $where;
         }
 
-        if (!empty($this->collectionWithDeleted) || strpos($where, $this->columnDeleted) !== false) {
+        $column = $this->getDeletedAtColumn();
+        // Условие по колонке уже задано явно (например, выборка только удалённых)
+        if (strpos($where, $column) !== false) {
             return $where;
         }
 
         return $where
             . ($where ? " AND" : "")
-            . sprintf(
-                " %sdeleted_at IS NULL",
-                $this->alias ? $this->alias . "." : ""
-            );
+            . sprintf(" %s%s IS NULL", $this->alias ? $this->alias . "." : "", $column);
     }
 
     private function buildJoinsExpression(): string
@@ -298,7 +292,7 @@ trait Getable
         $joinPrefixes = [
             'joins' => 'JOIN',
             'leftJoins' => 'LEFT JOIN',
-            'rightJoins' => 'RIGTH JOIN'
+            'rightJoins' => 'RIGHT JOIN'
         ];
 
         foreach (array_keys($joinPrefixes) as $joinType) {
@@ -420,208 +414,10 @@ trait Getable
             : $operand;
     }
 
-    /**
-     * @return array{0: array<int, string>, 1: bool, 2: bool}
-     */
-    private function resolveDummyConditions(string $where): array
-    {
-        $whereLower = strtolower($where);
-        $isOrCondition = strpos($whereLower, ' or ') !== false;
-        $isAndCondition = strpos($whereLower, ' and ') !== false;
-
-        if ($isOrCondition && $isAndCondition) {
-            throw new ModelException('DummyModel can process only one type of conditions: AND or OR');
-        }
-
-        if ($isOrCondition) {
-            return [explode(' or ', $whereLower), true, false];
-        }
-
-        if ($isAndCondition) {
-            return [explode(' and ', $whereLower), false, true];
-        }
-
-        return [[$whereLower], false, false];
-    }
-
-    /**
-     * @return array{0: string, 1: string|array<int, string>, 2: bool}
-     */
-    private function parseDummyCondition(string $condition, array $allFields, string $where): array
-    {
-        $isInCondition = str_contains($condition, ' in ');
-        $isEqualsCondition = str_contains($condition, '=');
-
-        if (!$isInCondition && !$isEqualsCondition) {
-            throw new ModelException('DummyModel used equals only');
-        }
-
-        if ($isEqualsCondition) {
-            [$key, $value] = explode('=', $condition);
-        } else {
-            [$key, $value] = explode(' in ', $condition);
-        }
-
-        $key = trim($key, '`\'" ' . ($isInCondition ? '(' : ''));
-
-        foreach ([$key, $value] as $token) {
-            foreach (['>', '<'] as $notAllowed) {
-                if (strpos($token, $notAllowed) !== false) {
-                    throw new ModelException(sprintf('DummyModel not allow condition %s', $where));
-                }
-            }
-        }
-
-        if (!in_array($key, $allFields)) {
-            throw new ModelException(sprintf(
-                'DummyModel %s havn`t field %s in expression %s',
-                get_class($this),
-                $key,
-                $where
-            ));
-        }
-
-        if ($isInCondition) {
-            $value = trim($value, '()');
-            $value = array_map(function ($singleValue) {
-                return trim($singleValue, '`\'" ');
-            }, ArrayHelper::stringCommasToArray($value));
-        } else {
-            $value = trim($value, '`\'" ');
-        }
-
-        return [$key, $value, $isInCondition];
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $rows
-     * @param string|array<int, string> $value
-     * @return array<int, int>
-     */
-    private function findDummyMatchedIndexes(array $rows, string $key, string|array $value, bool $isInCondition): array
-    {
-        $matchedIndexes = [];
-
-        foreach ($rows as $index => $item) {
-            $matched = isset($item[$key]) && (
-                (!$isInCondition && ($item[$key] == $value))
-                || ($isInCondition && in_array($item[$key], $value))
-            );
-
-            if ($matched) {
-                $matchedIndexes[] = $index;
-            }
-        }
-
-        return $matchedIndexes;
-    }
-
-    /**
-     * @param array<int, array<int, int>> $resultIndexes
-     * @return array<int, int>
-     */
-    private function mergeDummyConditionIndexes(array $resultIndexes, bool $isAndCondition): array
-    {
-        $resultIndexes = array_values($resultIndexes);
-        $indexes = $resultIndexes[0];
-
-        for ($i = 1; $i < count($resultIndexes); $i++) {
-            if ($isAndCondition) {
-                $indexes = array_intersect($indexes, $resultIndexes[$i]);
-            } else {
-                $indexes = array_merge($indexes, $resultIndexes[$i]);
-            }
-        }
-
-        return $indexes;
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $rows
-     * @return array<int, array<string, mixed>>
-     */
-    private function filterDummyRows(array $rows, string $where, array $allFields): array
-    {
-        [$conditions, , $isAndCondition] = $this->resolveDummyConditions($where);
-        $resultIndexes = [];
-
-        foreach ($conditions as $conditionIndex => $condition) {
-            [$key, $value, $isInCondition] = $this->parseDummyCondition($condition, $allFields, $where);
-            $resultIndexes[$conditionIndex] = $this->findDummyMatchedIndexes($rows, $key, $value, $isInCondition);
-        }
-
-        if (empty($resultIndexes)) {
-            return [];
-        }
-
-        $filteredRows = [];
-        foreach ($this->mergeDummyConditionIndexes($resultIndexes, $isAndCondition) as $index) {
-            $filteredRows[] = $rows[$index];
-        }
-
-        return $filteredRows;
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $rows
-     * @return array<int, array<string, mixed>>
-     */
-    private function orderDummyRows(array $rows, $orderby): array
-    {
-        if (!$orderby || count($rows) <= 1) {
-            return $rows;
-        }
-
-        $orderbyDesc = '';
-        if (strpos($orderby, ' ') !== false) {
-            [$orderby, $orderbyDesc] = explode(' ', $orderby, 2);
-        }
-        $isReverse = strtolower($orderbyDesc) === 'desc';
-
-        usort($rows, function ($a, $b) use ($orderby, $isReverse) {
-            $left = $a[$orderby];
-            $right = $b[$orderby];
-            $result = is_numeric($left) && is_numeric($right)
-                ? ($left <=> $right)
-                : strcmp((string) $left, (string) $right);
-
-            if ($isReverse) {
-                $result *= -1;
-            }
-
-            return $result;
-        });
-
-        return $rows;
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $rows
-     * @return array<int, array<string, mixed>>
-     */
-    private function sliceDummyRows(array $rows, $limit, $offset): array
-    {
-        if (!$offset && !$limit) {
-            return $rows;
-        }
-
-        return array_slice($rows, $offset ?? 0, $limit);
-    }
-
     private function getDummyRows(DummyModel $dummyModel, ?array $fields, $limit, $offset, $orderby)
     {
-        $where = $this->getWhereConditions();
-        $rows = $dummyModel->dummyRows();
-        if (!empty($where)) {
-            $allFields = $this->getFields();
-            foreach ($where as $w) {
-                $rows = $this->filterDummyRows($rows, $w, $allFields);
-            }
-        }
-
-        $rows = $this->orderDummyRows($rows, $orderby);
-        $rows = $this->sliceDummyRows($rows, $limit, $offset);
-        return $fields ? ArrayHelper::cutFields($rows, $fields) : $rows;
+        return (new DummyQuery(static::class, $this->getFields()))
+            ->run($dummyModel->dummyRows(), $this->getWhereConditions(), $fields, $limit, $offset, $orderby);
     }
 
     /**
@@ -637,11 +433,13 @@ trait Getable
      */
     private function doGet($fields = null, $limit = null, $offset = null, $orderby = null)
     {
-        // Приводим перечисление полей к строке
+        // Приводим перечисление полей к массиву; запятые внутри скобок — часть выражения: COALESCE(a, b)
         if ($fields && !is_array($fields)) {
-            $fields = ArrayHelper::stringCommasToArray($fields);
+            $fields = array_values(array_filter(
+                array_map('trim', ArrayHelper::stringCommasToArrayCheckBraces($fields)),
+                static fn(string $field) => $field !== ''
+            ));
         }
-        $allFields = $this->getFields();
         if ($this instanceof DummyModel) {
             $rows = $this->getDummyRows($this, $fields, $limit, $offset, $orderby);
             $this->clear(!!$this->aggregateFunc || $this->persistent);
@@ -649,7 +447,7 @@ trait Getable
         }
 
         $where = $this->getWhereString();
-        $where = $this->appendSoftDeleteWhere($where, $allFields);
+        $where = $this->appendSoftDeleteWhere($where);
         $whereExpr = $where ? "WHERE " . $where : '';
         $joinsExpr = $this->buildJoinsExpression();
         [$orderby, $orderbyDesc] = $this->resolveOrderByParts($orderby);
@@ -678,7 +476,8 @@ trait Getable
                 . ($groupBy ? ' GROUP BY ' . $groupBy : '')
                 . ($orderby ? ' ORDER BY ' . $orderby . ' ' . $orderbyDesc : '')
                 . '{ LIMIT ?d}{ OFFSET ?d}' . $this->lock,
-                $limit ?: DBSIMPLE_SKIP,
+                // OFFSET без LIMIT — синтаксическая ошибка в MySQL и SQLite
+                $limit ?: ($offset ? PHP_INT_MAX : DBSIMPLE_SKIP),
                 $offset ?: DBSIMPLE_SKIP
             );
         } finally {
@@ -803,7 +602,6 @@ trait Getable
      */
     public function value($field, $orderby = null)
     {
-        [, , $offset, $orderby] = $this->resolveCollectionArgs(null, null, null, $orderby);
         $value = $this->first($field, $orderby);
         return $this->extractScalarValue($this->normalizeValueSource($value), $field);
     }

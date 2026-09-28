@@ -124,45 +124,61 @@ class OnRetrieved
         return array_unique($pivotValues);
     }
 
-    private function getWhereString(array $wheres)
+    /**
+     * Собирает условие связи. Условия [..] из with() объединяются через OR.
+     *
+     * this(field) подставляет значение поля родительской строки. Условие строится для каждой
+     * родительской строки отдельно и привязывается к ней через ключ связи:
+     *   (post_id = 1 AND (user_id <> 1)) OR (post_id = 3 AND (user_id <> 2))
+     * Без привязки условия разных родителей смешивались и фильтр не работал.
+     *
+     * @param array<int, string> $wheres
+     * @param array<int, int|string> $kArray Индексы родительских строк, относящихся к этому классу
+     */
+    private function getWhereString(Relation $R, array $wheres, array $kArray, Model $relationModel): string
     {
         $whereStr = count($wheres) > 1 ? "(" . implode(") OR (", $wheres) . ")" : $wheres[0];
-        $symbols = "\w\d_";
-        $preg = sprintf('#[^%s]this\(([%s]+)\)#', $symbols, $symbols);
-        if (str_contains($whereStr, 'this') && preg_match_all($preg, $whereStr, $m)) {
-            $thisProps = $m[1];
-            $newWhere = [];
-            foreach ($this->rows as $_row) {
-                $where = $whereStr;
-                foreach ($thisProps as $thisProp) {
-                    if (!array_key_exists($thisProp, $_row)) {
-                        throw new ModelException(sprintf(
-                            "Property %s not found in model %s",
-                            $thisProp,
-                            get_class($this->model)
-                        ));
-                    }
-                    $where = str_replace('this(' . $thisProp . ')', $_row[$thisProp] ?? 'NULL', $where);
-                }
-                $newWhere[] = $where;
-            }
-
-            if (!empty($newWhere)) {
-                $whereStr = "(" . implode(") OR (", $newWhere) . ")";
-            } else {
-                $whereStr = "";
-            }
+        if (!preg_match_all('#(?<![\w])this\((\w+)\)#', $whereStr, $m)) {
+            return $whereStr;
         }
-        return $whereStr;
+
+        $db = $relationModel->getDb();
+        // Для many-to-many связь идёт через pivot, привязать условие к ключу нельзя
+        $bindToParent = !$R->getPivot();
+        $newWhere = [];
+        foreach ($kArray as $k) {
+            $row = $this->rows[$k];
+            $replace = [];
+            foreach ($m[1] as $thisProp) {
+                if (!array_key_exists($thisProp, $row)) {
+                    throw new ModelException(sprintf(
+                        "Property %s not found in model %s",
+                        $thisProp,
+                        $this->modelClassname()
+                    ));
+                }
+                $replace['this(' . $thisProp . ')'] = $row[$thisProp] === null ? 'NULL' : $db->escape($row[$thisProp]);
+            }
+            $condition = strtr($whereStr, $replace);
+            $newWhere[] = $bindToParent
+                ? sprintf('%s = %s AND (%s)', Model::dbEsc($R->otherKey()), $db->escape($row[$R->localKey()]), $condition)
+                : $condition;
+        }
+
+        return $newWhere ? "(" . implode(") OR (", array_unique($newWhere)) . ")" : "";
     }
 
-    private function createRelationModel(Relation $R, string $class, array $values, &$fields): Model
+    /**
+     * @param object{kArray: array<int, int|string>, values: array<int, mixed>} $values
+     * @param array<int, string>|null $fields Итоговый список полей связанной модели (выходной параметр)
+     */
+    private function createRelationModel(Relation $R, string $class, object $values, &$fields): Model
     {
         $otherKey = $R->otherKey();
         /** @var Model $RelationModel */
         $RelationModel = new $class();
         $this->model->inheritModel($RelationModel);
-        $RelationModel->where('?# IN (?a)', $otherKey, $values);
+        $RelationModel->where('?# IN (?a)', $otherKey, $values->values);
         $with = $R->getWithArray();
         $fields = $R->getFields();
         $exclude = $R->getExclude();
@@ -178,7 +194,7 @@ class OnRetrieved
         }
 
         if ($wheres) {
-            $RelationModel->where($this->getWhereString($wheres));
+            $RelationModel->where($this->getWhereString($R, $wheres, $values->kArray, $RelationModel));
         }
 
         if ($exclude) {
@@ -347,7 +363,7 @@ class OnRetrieved
         array &$returnRows
     ): void {
         $alias = $R->alias();
-        $RelationModel = $this->createRelationModel($R, $class, $values->values, $fields);
+        $RelationModel = $this->createRelationModel($R, $class, $values, $fields);
 
         $flags = $R->getFlags();
         $offset = $this->model->getFlag($flags, Model::FLAG_OFFSET);

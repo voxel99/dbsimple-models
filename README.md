@@ -1,19 +1,19 @@
 # Jam DbSimple Models
 
-[![PHP Version](https://img.shields.io/badge/php-%3E%3D8.1-8892BF.svg)](https://php.net/)
+[![PHP Version](https://img.shields.io/badge/php-%3E%3D8.4-8892BF.svg)](https://php.net/)
 [![License: LGPL 2.1](https://img.shields.io/badge/License-LGPL_2.1-blue.svg)](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html)
 
-A lightweight, high-performance Active Record and Model persistence layer for PHP 8.1+, built specifically on top of [`jam/dbsimple`](https://github.com/voxel99/dbsimple).
+A lightweight, high-performance Active Record and Model persistence layer for PHP 8.4+, built specifically on top of [`jam/dbsimple`](https://github.com/voxel99/dbsimple).
 
 ---
 
 ## Features
 
 - **Active Record Pattern**:
-  - Expressive CRUD operations: `first()`, `all()`, `find()`, `save()`, `delete()`, `insert()`.
-  - Fluent Query Builder methods (`where()`, `whereIn()`, `join()`, `limit()`, `offset()`, `groupBy()`, `orderBy()`).
-- **Rich Relations (Eager & Lazy loading)**:
-  - `hasOne`, `hasMany`, `belongsTo`, `manyToMany` relations.
+  - Expressive CRUD operations: `first()`, `all()`, `collection()`, `value()`, `column()`, `save()`, `update()`, `delete()`.
+  - Fluent Query Builder methods (`where()`, `join()`, `leftJoin()`, `limit()`, `offset()`, `groupBy()`, `orderBy()`) with DbSimple placeholders (`?`, `?d`, `?a`, `?#`, `?s`) and optional `{...}` blocks.
+- **Rich Relations (explicit eager loading, no N+1)**:
+  - `hasOne`, `hasMany`, `belongs`, many-to-many (`hasMany` through a pivot model), polymorphic and in-code (`DummyModel`) relations.
   - Multi-level relation resolution with custom field projections and conditions (`with('items(id,title):c')`).
 - **Data Casting & Transformations**:
   - Typed fields (`bool`, `int`, `uint`, `float`, `date`, `datetime`, `json`, `delim`, `flags`, `ip`).
@@ -22,9 +22,16 @@ A lightweight, high-performance Active Record and Model persistence layer for PH
   - Declarative `$computed` properties with lazy evaluation.
   - Flag-based array/object conversions via `toArray(':c')` and `toObject()`.
 - **Master / Replica (Slave) Support**:
-  - First-class support for multiple database connections and seamless read/write splitting.
+  - Multiple named connections; `->db(Model::DB_SLAVE)` switches a query (and its eager-loaded relations) to a replica.
 - **Model Events Lifecycle**:
   - Hooks for `retrieved`, `creating`, `created`, `updating`, `updated`, `deleting`, `deleted`.
+
+---
+
+## Requirements
+
+- PHP 8.4+
+- [`jam/dbsimple`](https://github.com/voxel99/dbsimple) (MySQL via PDO is the primary target; the generated SQL uses the MySQL dialect)
 
 ---
 
@@ -81,18 +88,24 @@ class User extends Model
 
 #### Finding & Querying
 
+Queries start from a builder instance: `Model::instance()`.
+
 ```php
-// Find by primary key
-$user = User::find(42);
+// Find by primary key (first() returns an empty model, not null, when nothing is found)
+$user = User::instance()->id(42)->first();
+if ($user->isEmpty()) { /* 404 */ }
 
 // Query with conditions
-$activeUsers = User::where('is_active = ?d', 1)
+$activeUsers = User::instance()
+    ->where('is_active = ?d', 1)
+    ->where('email LIKE ?', '%@example.com')
     ->orderBy('created_at DESC')
     ->limit(10)
     ->collection();
 
-// Eager load relations with flags (:c for computed)
-$usersArray = $activeUsers->toArray(':c');
+// Eager load relations (one query per relation, no N+1) and export with computed fields
+$users = User::instance()->with('posts(id, title):o(id DESC), profile')->all();
+$usersArray = $users->toArray(':cd');
 ```
 
 #### Creating & Updating
@@ -107,10 +120,35 @@ $user = new User([
 ]);
 $user->save();
 
-// Update
+// Update (save() writes all loaded fields; update() — only the listed ones)
 $user->first_name = 'Alexander';
-$user->save();
+$user->update('first_name');
 ```
+
+---
+
+## Documentation by example
+
+The [`examples/`](examples) directory contains runnable scripts (in-memory SQLite, nothing to set up)
+covering model definition, CRUD, the query builder, casting, relations, eager loading syntax,
+saving object graphs, API output flags, events / timestamps / soft deletes and master-replica setups,
+plus a list of best practices and pitfalls: see [`examples/README.md`](examples/README.md).
+
+```bash
+php examples/06-eager-loading.php
+```
+
+## Tests
+
+```bash
+composer install
+vendor/bin/phpunit                         # unit + integration tests on in-memory SQLite
+
+# the same integration suite (plus MySQL-only features) on MySQL / MariaDB
+DBSIMPLE_TEST_MYSQL=mysql://user:pass@127.0.0.1/dbsimple_test vendor/bin/phpunit
+```
+
+`jam/dbsimple` is resolved from a sibling `../dbsimple` checkout (see `repositories` in `composer.json`).
 
 ---
 

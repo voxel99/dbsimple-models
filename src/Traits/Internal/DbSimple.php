@@ -35,12 +35,18 @@ trait DbSimple
      */
     protected $db;
 
+    /**
+     * Объект соединения модели (для escape(), транзакций и сырых запросов)
+     * @return DatabaseInterface|\Jam\DbSimple\Connect
+     */
+    public function getDb(): object
+    {
+        return $this->db;
+    }
+
     public function bootDBSimple()
     {
-        if (!isset(self::$dbList[$this->jamConnection])) {
-            throw new Exception('Db not initialized, `' . $this->jamConnection . '` not found in db list');
-        }
-        $this->db = self::$dbList[$this->jamConnection]; // \db($this->jamConnection);
+        $this->db = self::getDbConnection($this->jamConnection);
     }
 
     /**
@@ -52,12 +58,10 @@ trait DbSimple
      */
     public function db($connection)
     {
-        if (!isset(self::$dbList[$this->jamConnection])) {
-            throw new Exception('Db not initialized, `' . $this->jamConnection . '` not found in db list');
-        }
-
+        // Проверяем именно запрошенное соединение (раньше проверялось текущее,
+        // и db('unknown') молча записывал null в $this->db)
+        $this->db = self::getDbConnection($connection);
         $this->jamConnection = $connection;
-        $this->db = self::$dbList[$this->jamConnection];
         return $this;
     }
 }

@@ -23,7 +23,7 @@ trait Timestamps
                     if (!empty($this->{$this->getCreatedAtColumn()})) {
                         $data[$this->getCreatedAtColumn()] = $this->{$this->getCreatedAtColumn()};
                     } else {
-                        $this->{$this->getCreatedAtColumn()} = $data[$this->getCreatedAtColumn()] = date("Y-m-d H:i:s");
+                        $this->{$this->getCreatedAtColumn()} = $data[$this->getCreatedAtColumn()] = static::freshTimestamp();
                     }
                 }
             }
@@ -31,23 +31,11 @@ trait Timestamps
         });
 
         $this->on(Model::EVENT_UPDATING, function ($id, $data) {
-            $this->{$this->getUpdatedAtColumn()} = $data[$this->getUpdatedAtColumn()] = date("Y-m-d H:i:s");
+            $this->{$this->getUpdatedAtColumn()} = $data[$this->getUpdatedAtColumn()] = static::freshTimestamp();
             return $data;
         });
     }
 
-    protected function updateTimestamps()
-    {
-        $time = date("Y-m-d H:i:s");
-
-        if (is_null($this->updated_at)) {
-            $this->setUpdatedAt($time);
-        }
-
-        if (is_null($this->created_at) && !$this->{$this->pk()}) {
-            $this->setCreatedAt($time);
-        }
-    }
 
     /**
      * Set the value of the "created at" attribute.

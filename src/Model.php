@@ -109,6 +109,13 @@ class Model extends ModelAbstract implements IRelationList
     protected string $extra = '';
 
     /**
+     * Приведение типов полей: ['int' => 'id, user_id', 'json' => 'settings', ...]
+     * Нетипизированное свойство: наследники объявляют его как `protected $types = [...]`.
+     * @var array<string, string|array<int|string, mixed>>
+     */
+    protected $types = [];
+
+    /**
      * Модель будет сохранять внутреннее состояние после возврата результата
      * @var bool
      */
@@ -189,9 +196,28 @@ class Model extends ModelAbstract implements IRelationList
         return $this;
     }
 
+    /**
+     * @throws ModelException DummyModel (справочник в коде) только для чтения
+     */
+    protected function assertWritable(): void
+    {
+        if ($this instanceof DummyModel) {
+            throw new ModelException('DummyModel is readonly');
+        }
+    }
+
     public function useTrashed(): bool
     {
         return false;
+    }
+
+    /**
+     * Текущее время в формате БД. Используется Timestamps, SoftDeletes и updateRaw().
+     * Переопределите в базовой модели проекта, если нужен другой источник времени.
+     */
+    public static function freshTimestamp(): string
+    {
+        return date('Y-m-d H:i:s');
     }
 
     public static function dbEsc(string $field): string
@@ -289,7 +315,7 @@ class Model extends ModelAbstract implements IRelationList
                     if (!empty($ids)) {
                         if ($pivot) {
                             $pivot->where(
-                                '?# = ?d AND ?# IN (?a)',
+                                '?# = ? AND ?# IN (?a)',
                                 $R->pivotLocalKey(),
                                 $thisId,
                                 $R->pivotOtherKey(),
@@ -345,35 +371,29 @@ class Model extends ModelAbstract implements IRelationList
     }
 
     /**
-     * Check relation
-     * @param string $alias
+     * DummyModel только для чтения: связанные записи должны совпадать со строками dummyRows().
      *
-     * @return void
      * @throws ModelException
      */
     public function checkDummyModelRelation(string $alias): void
     {
-        if (!empty($this->{$alias})) {
-            $className = $this->getClassNameByAlias($alias);
-            if ($className) {
-                $dummyModel = new $className();
-                $rows = $dummyModel->dummyRows();
-                $pk = $dummyModel->pk();
-                $checkedRows = $this->{$alias}->toArray();
-                foreach ($checkedRows as $checkedRow) {
-                    $found = false;
-                    $res = false;
-                    foreach ($rows as $row) {
-                        if ($row[$pk] === $checkedRow[$pk]) {
-                            $res = ArrayHelper::isSubset($row, $checkedRow);
-                            $found = true;
-                            break;
-                        }
-                    }
-                    if (!$found || !$res) {
-                        throw new ModelException('DummyModel is readonly');
-                    }
-                }
+        $related = $this->{$alias};
+        $className = $this->getClassNameByAlias($alias);
+        if (empty($related) || !$className) {
+            return;
+        }
+
+        /** @var Model&DummyModel $dummyModel */
+        $dummyModel = new $className();
+        $pk = $dummyModel->pk();
+        $rowsByPk = array_column($dummyModel->dummyRows(), null, $pk);
+        // belongs/hasOne — одна модель, hasMany — ModelList
+        $checkedRows = $related instanceof ModelList ? $related->toArray() : [$related->toArray()];
+
+        foreach ($checkedRows as $checkedRow) {
+            $row = $rowsByPk[$checkedRow[$pk] ?? null] ?? null;
+            if ($row === null || !ArrayHelper::isSubset($row, $checkedRow)) {
+                throw new ModelException('DummyModel is readonly');
             }
         }
     }
@@ -388,112 +408,153 @@ class Model extends ModelAbstract implements IRelationList
     }
 
     /**
-     * Сохранить (обновить или вставить) запись
-     * @param array $params
-     * @param bool $saveRelations
+     * Сохранить (обновить или вставить) запись вместе с загруженными связями.
+     *
+     * Порядок: belongs-связи (чтобы получить внешние ключи) -> сама модель ->
+     * [удаление отвязанных записей при SAVE_USE_CHECK_OLD] -> has-связи и pivot-строки.
+     *
+     * @param array<string, mixed> $params SAVE_USE_* и параметры для связей: [alias => [...], SAVE_PARAMS_ALL => [...]]
      * @return int ID записи
      * @throws ModelException
      */
     public function save(array $params = [], bool $saveRelations = true): int
     {
-        $modelParams = $params[self::SAVE_PARAMS_ALL] ?? [];
-        foreach (
-            [
-             self::SAVE_USE_INSERT_DKU,
-             self::SAVE_USE_INSERT_IGNORE,
-             self::SAVE_USE_INSERT,
-             self::SAVE_USE_CHECK_OLD
-            ] as $p
-        ) {
-            if (isset($params[$p])) {
-                $modelParams[$p] = $params[$p];
-            }
-        }
-
-        $insertDku = $modelParams[self::SAVE_USE_INSERT_DKU] ?? false;
-        $insertIgnore = $modelParams[self::SAVE_USE_INSERT_IGNORE] ?? false;
-        $useInsert = !empty($modelParams[self::SAVE_USE_INSERT]) || $insertIgnore || $insertDku;
-        $useCheckOld = !empty($modelParams[self::SAVE_USE_CHECK_OLD]);
+        $options = $this->resolveSaveOptions($params);
 
         if ($saveRelations) {
-            // Сохраняем модели в отношении belongs
             foreach ($this->belongs as $R) {
-                if ($this->relationIsDummyModel($R->alias())) {
-                    $this->checkDummyModelRelation($R->alias());
-                } else {
-                    $this->saveRelation($R);
-                }
+                $this->saveRelatedModels($R);
             }
         }
 
-        $pk = $this->pk();
-        $id = $this->{$pk} ?: 0;
+        $id = $this->{$this->pk()} ?: 0;
+        $newId = $this->persist($id, $options);
 
-        // Hack
-        if ($pk !== 'id' && $id) {
-            $insertDku = $useInsert = true;
-        }
-        // End of hack
-
-        if ($id) {
-            $newId = $useInsert
-                ? ($insertDku ? $this->insertD() : ($insertIgnore ? $this->insertI() : $this->insert()))
-                : $this->update();
-        } else {
-            $newId = $insertDku ? $this->insertD() : ($insertIgnore ? $this->insertI() : $this->insert());
-            $this->{$this->pk()} = $newId;
-        }
-        $initRelations = $this->getInitedRelations();
-
-        if ($useCheckOld && $id && $initRelations) {
-            $oldModel = static::instance()->id($id)->with(array_keys($initRelations))->first();
-            /**
-             * @var string $alias
-             * @var Relation $R
-             */
-            foreach ($initRelations as $alias => $R) {
-                if (!empty($oldModel->{$alias})) {
-                    $this->deleteOld($alias, $R, $oldModel);
-                }
-            }
+        if ($options[self::SAVE_USE_CHECK_OLD] && $id) {
+            $this->deleteDetachedRelations($id);
         }
 
         if ($saveRelations) {
-            // Сохраняем модели в отношении много-ко-многим
-            foreach ($this->hasMany as $R) {
-                if ($R->getPivot()) {
-                    if ($this->relationIsDummyModel($R->alias())) {
-                        $this->checkDummyModelRelation($R->alias());
-                    } else {
-                        $this->saveRelation($R);
-                    }
-                }
-            }
-
-            $this->setRelationKeys();
-            $relations = $this->getAllRelations();
-            // Сохраняем остальные модели и pivot в отношениях много-ко-многим
-            foreach ($relations as $R) {
-                if ($R->isTypeBelongs()) {
-                    continue;
-                }
-                $pivot = $R->getPivotModelList();
-                if ($pivot && !$pivot->isEmpty()) {
-                    $pivot->save([
-                        self::SAVE_USE_INSERT => $useInsert,
-                        self::SAVE_USE_INSERT_DKU => false,
-                        self::SAVE_USE_INSERT_IGNORE => true
-                    ]);
-                } else {
-                    if ($this->relationIsDummyModel($R->alias())) {
-                        $this->checkDummyModelRelation($R->alias());
-                    } else {
-                        $this->saveRelation($R);
-                    }
-                }
-            }
+            $this->saveHasRelations($options[self::SAVE_USE_INSERT]);
         }
         return (int) $newId;
+    }
+
+    /**
+     * @param array<string, mixed> $params
+     * @return array<string, bool>
+     */
+    private function resolveSaveOptions(array $params): array
+    {
+        $options = $params[self::SAVE_PARAMS_ALL] ?? [];
+        foreach ([self::SAVE_USE_INSERT_DKU, self::SAVE_USE_INSERT_IGNORE, self::SAVE_USE_INSERT, self::SAVE_USE_CHECK_OLD] as $p) {
+            if (isset($params[$p])) {
+                $options[$p] = $params[$p];
+            }
+        }
+
+        $insertDku = !empty($options[self::SAVE_USE_INSERT_DKU]);
+        $insertIgnore = !empty($options[self::SAVE_USE_INSERT_IGNORE]);
+        return [
+            self::SAVE_USE_INSERT_DKU => $insertDku,
+            self::SAVE_USE_INSERT_IGNORE => $insertIgnore,
+            self::SAVE_USE_INSERT => !empty($options[self::SAVE_USE_INSERT]) || $insertIgnore || $insertDku,
+            self::SAVE_USE_CHECK_OLD => !empty($options[self::SAVE_USE_CHECK_OLD]),
+        ];
+    }
+
+    /**
+     * INSERT или UPDATE самой модели.
+     *
+     * @param array<string, bool> $options
+     */
+    private function persist(int|string $id, array $options): int|string
+    {
+        // Для «естественного» ключа (pk !== 'id') заданное значение ключа не означает, что запись
+        // уже есть в БД — делаем upsert (INSERT ... ON DUPLICATE KEY UPDATE, только MySQL)
+        if ($id && $this->pk() !== 'id') {
+            $options[self::SAVE_USE_INSERT_DKU] = $options[self::SAVE_USE_INSERT] = true;
+        }
+
+        if ($id && !$options[self::SAVE_USE_INSERT]) {
+            return $this->update();
+        }
+
+        $newId = match (true) {
+            $options[self::SAVE_USE_INSERT_DKU] => $this->insertD(),
+            $options[self::SAVE_USE_INSERT_IGNORE] => $this->insertI(),
+            default => $this->insert(),
+        };
+        if (!$id) {
+            $this->{$this->pk()} = $newId;
+        }
+        return $newId;
+    }
+
+    /**
+     * SAVE_USE_CHECK_OLD: удалить из БД связанные записи (или pivot-строки),
+     * которых больше нет в загруженных связях модели.
+     */
+    private function deleteDetachedRelations(int|string $id): void
+    {
+        $initRelations = $this->getInitedRelations();
+        if (!$initRelations) {
+            return;
+        }
+        $oldModel = static::instance()->id($id)->with(array_keys($initRelations))->first();
+        foreach ($initRelations as $alias => $R) {
+            if (!empty($oldModel->{$alias})) {
+                $this->deleteOld($alias, $R, $oldModel);
+            }
+        }
+    }
+
+    private function saveHasRelations(bool $useInsert): void
+    {
+        // many-to-many: сначала сами связанные модели — нужны их id для pivot-строк
+        foreach ($this->hasMany as $R) {
+            if ($R->getPivot()) {
+                $this->saveRelatedModels($R);
+            }
+        }
+
+        // Проставляем внешние ключи детям и собираем pivot-строки
+        $this->setRelationKeys();
+
+        foreach ($this->getAllRelations() as $R) {
+            if ($R->isTypeBelongs()) {
+                continue;
+            }
+            $pivot = $R->getPivotModelList();
+            if ($pivot && !$pivot->isEmpty()) {
+                // INSERT IGNORE: уже существующие связи не дублируются
+                $pivot->save([
+                    self::SAVE_USE_INSERT => $useInsert,
+                    self::SAVE_USE_INSERT_DKU => false,
+                    self::SAVE_USE_INSERT_IGNORE => true
+                ]);
+            } else {
+                $this->saveRelatedModels($R);
+            }
+        }
+    }
+
+    /**
+     * Сохранить модели одной связи. DummyModel не сохраняется, а проверяется на неизменность;
+     * для belongs-связи с ним в модель проставляется внешний ключ.
+     */
+    private function saveRelatedModels(Relation $R): void
+    {
+        $alias = $R->alias();
+        if (!$this->relationIsDummyModel($alias)) {
+            $this->saveRelation($R);
+            return;
+        }
+
+        $this->checkDummyModelRelation($alias);
+        if ($R->isTypeBelongs() && $this->{$alias} instanceof Model) {
+            $this->{$R->localKey()} = $this->{$alias}->{$R->otherKey()};
+        }
     }
 
     public function isEmpty(): bool
@@ -549,7 +610,7 @@ class Model extends ModelAbstract implements IRelationList
             in_array($instance->columnUpdated, $instance->getFields()) &&
             !isset($data[$instance->columnUpdated])
         ) {
-            $data[$instance->columnUpdated] = request_time('Y-m-d H:i:s');
+            $data[$instance->columnUpdated] = static::freshTimestamp();
         }
         return $instance->db->query(
             'UPDATE ?# SET ?a WHERE ?# IN (?a)',

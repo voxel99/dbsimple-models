@@ -5,7 +5,6 @@ namespace Jam\Models;
 use Closure;
 use Jam\Models\Traits\Crud\Withable;
 use Jam\Models\Utils\ArrayHelper;
-use Jam\Models\Utils\Code;
 
 class Relation
 {
@@ -68,8 +67,6 @@ class Relation
      */
     protected array $flags = [];
 
-    public static array $loadedTraits = [];
-
     protected bool $isClosure;
 
     public function __construct(
@@ -83,24 +80,6 @@ class Relation
         $pivotLocalKey = '',
         $pivotOtherKey = ''
     ) {
-        $thisClass = get_class($this);
-        if (!isset(self::$loadedTraits[$thisClass])) {
-            // Загружаем все используемые трейты
-            $traits = Code::classUsesRecursive($thisClass);
-            self::$loadedTraits[$thisClass] = [];
-            foreach ($traits as $trait) {
-                if (method_exists(get_called_class(), $method = 'boot' . Code::classBasename($trait))) {
-                    self::$loadedTraits[$thisClass][] = $method;
-                }
-            }
-        }
-
-        if (!empty(self::$loadedTraits[$thisClass])) {
-            foreach (self::$loadedTraits[$thisClass] as $method) {
-                $this->{$method}();
-            }
-        }
-
         $this->class = $classname;
         $this->alias = $alias;
         $this->type = $type;

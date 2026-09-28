@@ -1,7 +1,13 @@
 {
     "name": "jam/dbsimple-models",
     "description": "ActiveRecord / Model layer for Jam DbSimple",
-    "keywords": ["database", "models", "active-record", "orm", "dbsimple"],
+    "keywords": [
+        "database",
+        "models",
+        "active-record",
+        "orm",
+        "dbsimple"
+    ],
     "type": "library",
     "license": "LGPL-2.1-only",
     "authors": [
@@ -17,7 +23,7 @@
         }
     ],
     "require": {
-        "php": ">=8.1",
+        "php": ">=8.4",
         "jam/dbsimple": "dev-main || ^1.0"
     },
     "require-dev": {
@@ -30,9 +36,15 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Jam\\Models\\Tests\\": "tests/"
+            "Jam\\Models\\Tests\\": "tests/",
+            "Jam\\Models\\Examples\\": "examples/"
         }
     },
     "minimum-stability": "dev",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "scripts": {
+        "test": "phpunit",
+        "test:mysql": "DBSIMPLE_TEST_MYSQL=mysql://test:test@127.0.0.1/dbsimple_test phpunit",
+        "examples": "for f in examples/[0-9]*.php; do echo \"### $f\"; php \"$f\" > /dev/null || exit 1; done"
+    }
 }

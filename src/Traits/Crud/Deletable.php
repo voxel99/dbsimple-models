@@ -2,9 +2,7 @@
 
 namespace Jam\Models\Traits\Crud;
 
-use Jam\Models\DummyModel;
 use Jam\Models\Model;
-use Jam\Models\ModelException;
 use Jam\Models\Traits\SoftDeletes;
 use Jam\Models\Utils\Code;
 
@@ -12,9 +10,7 @@ trait Deletable
 {
     public function delete($withHASRelations = false, $withBELONGSRelation = false)
     {
-        if (Code::isImplements($this, DummyModel::class)) {
-            throw new ModelException('DummyModel is readonly');
-        }
+        $this->assertWritable();
         $id = $this->{$this->pk()};
         $stat = true;
 
@@ -39,7 +35,7 @@ trait Deletable
         }
         if ($this->fire(Model::EVENT_DELETING, $this)) {
             $stat = $this->db->query(
-                'DELETE FROM ?_' . $this->table() . ' WHERE ?# = ?d',
+                'DELETE FROM ?_' . $this->table() . ' WHERE ?# = ?',
                 $this->pk(),
                 $id
             );
