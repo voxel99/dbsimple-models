@@ -8,7 +8,7 @@ use Jam\Models\Model;
 use Jam\Models\Tests\Fixtures\Models\Post;
 use Jam\Models\Tests\Fixtures\Models\User;
 use Jam\Models\Tests\Support\DatabaseTestCase;
-use Jam\Models\Tests\Support\PdoSqlite;
+use Jam\DbSimple\Adapter\Sqlite;
 use Jam\Models\Tests\Support\Schema;
 
 /**
@@ -16,16 +16,16 @@ use Jam\Models\Tests\Support\Schema;
  */
 final class ConnectionsTest extends DatabaseTestCase
 {
-    private PdoSqlite $replica;
+    private Sqlite $replica;
 
     protected function setUp(): void
     {
         parent::setUp();
         // Отдельная БД в роли реплики: так видно, из какой базы пришли данные
-        $this->replica = new PdoSqlite(':memory:');
-        Schema::create($this->replica->pdo());
-        $this->replica->pdo()->exec("INSERT INTO users (id, email, name) VALUES (1, 'replica@x.io', 'From replica')");
-        $this->replica->pdo()->exec("INSERT INTO posts (id, user_id, title) VALUES (1, 1, 'Replica post')");
+        $this->replica = new Sqlite(['path' => ':memory:']);
+        Schema::create($this->replica->getPdo());
+        $this->replica->getPdo()->exec("INSERT INTO users (id, email, name) VALUES (1, 'replica@x.io', 'From replica')");
+        $this->replica->getPdo()->exec("INSERT INTO posts (id, user_id, title) VALUES (1, 1, 'Replica post')");
 
         Model::initDbSimple([Model::DB_MASTER => $this->db, Model::DB_SLAVE => $this->replica]);
         (new User(['email' => 'master@x.io', 'name' => 'From master']))->save();

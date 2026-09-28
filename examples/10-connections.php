@@ -18,17 +18,17 @@ declare(strict_types=1);
 
 use Jam\Models\Examples\Models\User;
 use Jam\Models\Model;
-use Jam\Models\Tests\Support\PdoSqlite;
+use Jam\DbSimple\Adapter\Sqlite;
 
 require __DIR__ . '/bootstrap.php';
 $master = examples_connect(false);
 examples_seed();
 
 // «Реплика» — отдельная база с чуть отличающимися данными, чтобы было видно, откуда чтение
-$replica = new PdoSqlite(':memory:');
-$replica->pdo()->exec(EXAMPLES_SCHEMA);
-$replica->pdo()->exec("INSERT INTO users (id, email, name) VALUES (1, 'alice@example.com', 'Alice (replica)')");
-$replica->pdo()->exec("INSERT INTO posts (id, user_id, title) VALUES (1, 1, 'Replica post')");
+$replica = new Sqlite(['path' => ':memory:']);
+$replica->getPdo()->exec(EXAMPLES_SCHEMA);
+$replica->getPdo()->exec("INSERT INTO users (id, email, name) VALUES (1, 'alice@example.com', 'Alice (replica)')");
+$replica->getPdo()->exec("INSERT INTO posts (id, user_id, title) VALUES (1, 1, 'Replica post')");
 examples_log_sql($master, 'master');
 examples_log_sql($replica, 'replica');
 

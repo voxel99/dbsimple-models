@@ -16,13 +16,13 @@
  *     });
  *     Model::initDbSimple([Model::DB_MASTER => $master]);
  *
- * Здесь вместо MySQL — SQLite в памяти (адаптер из tests/Support), чтобы примеры работали «из коробки».
+ * Здесь вместо MySQL — SQLite в памяти (Jam\DbSimple\Adapter\Sqlite), чтобы примеры работали «из коробки».
  */
 
 declare(strict_types=1);
 
 use Jam\Models\Model;
-use Jam\Models\Tests\Support\PdoSqlite;
+use Jam\DbSimple\Adapter\Sqlite;
 
 require __DIR__ . '/../vendor/autoload.php';
 
@@ -93,10 +93,10 @@ SQL;
 /**
  * Создаёт in-memory БД со схемой примеров и регистрирует её как master.
  */
-function examples_connect(bool $logSql = true): PdoSqlite
+function examples_connect(bool $logSql = true): Sqlite
 {
-    $db = new PdoSqlite(':memory:');
-    $db->pdo()->exec(EXAMPLES_SCHEMA);
+    $db = new Sqlite(['path' => ':memory:']);
+    $db->getPdo()->exec(EXAMPLES_SCHEMA);
     $db->setErrorHandler(static function (string $message): void {
         throw new RuntimeException($message);
     });
