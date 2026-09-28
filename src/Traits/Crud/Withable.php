@@ -4,14 +4,11 @@ namespace Jam\Models\Traits\Crud;
 
 use Exception;
 use Jam\Models\Model;
-use Jam\Models\ModelList;
 use Jam\Models\ModelException;
 use Jam\Models\OnRetrieved;
 use Jam\Models\Relation;
 use Jam\Models\Utils\ArrayHelper;
-use Jam\Models\Utils\Code;
 use Jam\Models\Utils\Strings;
-use Jam\Models\StringableInterface;
 
 trait Withable
 {

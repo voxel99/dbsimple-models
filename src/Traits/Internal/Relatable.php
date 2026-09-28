@@ -111,11 +111,7 @@ trait Relatable
 
     public function getLocalKeys()
     {
-        $relations = $this->getAllRelations();
-        $keys = [];
-        foreach ($relations as $relation) {
-            $keys[] = $relation->localKey();
-        }
+        $keys = array_map(static fn(Relation $R) => $R->localKey(), array_values($this->getAllRelations()));
         $keys[] = $this->pk();
         return array_unique($keys);
     }
@@ -134,18 +130,10 @@ trait Relatable
         return $this->belongs;
     }
 
-    public function getRelationByAlias($prop)
+    public function getRelationByAlias($prop): ?Relation
     {
-        if (is_string($prop)) {
-            $relations = $this->getAllRelations();
-            /** @var Relation $R */
-            foreach ($relations as $R) {
-                if ($R->alias() == $prop) {
-                    return $R;
-                }
-            }
-        }
-        return null;
+        // Связи хранятся по ключу-алиасу
+        return is_string($prop) ? ($this->getAllRelations()[$prop] ?? null) : null;
     }
 
     public function getRelationByClass($className, $row = null)
@@ -199,13 +187,7 @@ trait Relatable
 
     public function getRelationAliases()
     {
-        $relations = $this->getAllRelations();
-        $aliases = [];
-        /** @var Relation $R */
-        foreach ($relations as $R) {
-            $aliases[] = $R->alias();
-        }
-        return $aliases;
+        return array_keys($this->getAllRelations());
     }
 
     /**

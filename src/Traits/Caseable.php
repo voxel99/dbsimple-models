@@ -4,10 +4,6 @@ namespace Jam\Models\Traits;
 
 use Exception;
 use Jam\Models\CasesInterface;
-use Jam\Models\ModelAbstract;
-use Jam\Models\StringableInterface;
-use Jam\Models\Utils\ArrayHelper;
-use Jam\Models\Utils\Code;
 
 trait Caseable
 {

@@ -4,11 +4,8 @@ namespace Jam\Models\Traits\Internal;
 
 use Jam\Models\Model;
 use Jam\Models\ModelAbstract;
-use Jam\Models\ModelException;
-use Jam\Models\ModelList;
 use Jam\Models\Relation;
 use Jam\Models\Utils\ArrayHelper;
-use ReflectionException;
 use stdClass;
 
 trait Convertable

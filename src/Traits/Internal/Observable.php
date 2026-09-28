@@ -31,17 +31,18 @@ trait Observable
         $this->thisTraitEvents[$event][] = $callback;
     }
 
-    public function fire($event, /*,...,*/ $data)
+    /**
+     * Вызывает обработчики события по цепочке. Последний аргумент — «данные»:
+     * каждый обработчик получает все аргументы и возвращает новые данные для следующего.
+     *
+     * @return mixed Данные после всех обработчиков
+     */
+    public function fire(string $event, mixed ...$args): mixed
     {
-        $args = func_get_args();
-        $event = array_shift($args);
-        $data = $args ? $args[count($args) - 1] : [];
-        if (isset($this->thisTraitEvents[$event])) {
-            foreach ($this->thisTraitEvents[$event] as $callable) {
-                $data = call_user_func_array($callable, $args);
-                $args[count($args) - 1] = $data;
-            }
+        $last = count($args) - 1;
+        foreach ($this->thisTraitEvents[$event] ?? [] as $callable) {
+            $args[$last] = $callable(...$args);
         }
-        return $data;
+        return $args[$last] ?? [];
     }
 }

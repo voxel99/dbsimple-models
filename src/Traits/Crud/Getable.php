@@ -4,9 +4,9 @@ namespace Jam\Models\Traits\Crud;
 
 use Exception;
 use Jam\Models\DummyModel;
+use Jam\Models\DummyQuery;
 use Jam\Models\Model;
 use Jam\Models\ModelAbstract;
-use Jam\Models\ModelException;
 use Jam\Models\ModelList;
 use Jam\Models\StringableInterface;
 use Jam\Models\Utils\ArrayHelper;
@@ -247,7 +247,7 @@ trait Getable
 
     private function strSubQuery($expr)
     {
-        $sub = is_object($expr) && get_class($expr) === SubQuery::class
+        $sub = $expr instanceof SubQuery
             ? $expr
             : call_user_func_array([$this->db, 'subquery'], $expr);
 
@@ -414,208 +414,10 @@ trait Getable
             : $operand;
     }
 
-    /**
-     * @return array{0: array<int, string>, 1: bool, 2: bool}
-     */
-    private function resolveDummyConditions(string $where): array
-    {
-        $whereLower = strtolower($where);
-        $isOrCondition = strpos($whereLower, ' or ') !== false;
-        $isAndCondition = strpos($whereLower, ' and ') !== false;
-
-        if ($isOrCondition && $isAndCondition) {
-            throw new ModelException('DummyModel can process only one type of conditions: AND or OR');
-        }
-
-        if ($isOrCondition) {
-            return [explode(' or ', $whereLower), true, false];
-        }
-
-        if ($isAndCondition) {
-            return [explode(' and ', $whereLower), false, true];
-        }
-
-        return [[$whereLower], false, false];
-    }
-
-    /**
-     * @return array{0: string, 1: string|array<int, string>, 2: bool}
-     */
-    private function parseDummyCondition(string $condition, array $allFields, string $where): array
-    {
-        $isInCondition = str_contains($condition, ' in ');
-        $isEqualsCondition = str_contains($condition, '=');
-
-        if (!$isInCondition && !$isEqualsCondition) {
-            throw new ModelException('DummyModel used equals only');
-        }
-
-        if ($isEqualsCondition) {
-            [$key, $value] = explode('=', $condition);
-        } else {
-            [$key, $value] = explode(' in ', $condition);
-        }
-
-        $key = trim($key, '`\'" ' . ($isInCondition ? '(' : ''));
-
-        foreach ([$key, $value] as $token) {
-            foreach (['>', '<'] as $notAllowed) {
-                if (strpos($token, $notAllowed) !== false) {
-                    throw new ModelException(sprintf('DummyModel not allow condition %s', $where));
-                }
-            }
-        }
-
-        if (!in_array($key, $allFields)) {
-            throw new ModelException(sprintf(
-                'DummyModel %s havn`t field %s in expression %s',
-                get_class($this),
-                $key,
-                $where
-            ));
-        }
-
-        if ($isInCondition) {
-            $value = trim($value, '()');
-            $value = array_map(function ($singleValue) {
-                return trim($singleValue, '`\'" ');
-            }, ArrayHelper::stringCommasToArray($value));
-        } else {
-            $value = trim($value, '`\'" ');
-        }
-
-        return [$key, $value, $isInCondition];
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $rows
-     * @param string|array<int, string> $value
-     * @return array<int, int>
-     */
-    private function findDummyMatchedIndexes(array $rows, string $key, string|array $value, bool $isInCondition): array
-    {
-        $matchedIndexes = [];
-
-        foreach ($rows as $index => $item) {
-            $matched = isset($item[$key]) && (
-                (!$isInCondition && ($item[$key] == $value))
-                || ($isInCondition && in_array($item[$key], $value))
-            );
-
-            if ($matched) {
-                $matchedIndexes[] = $index;
-            }
-        }
-
-        return $matchedIndexes;
-    }
-
-    /**
-     * @param array<int, array<int, int>> $resultIndexes
-     * @return array<int, int>
-     */
-    private function mergeDummyConditionIndexes(array $resultIndexes, bool $isAndCondition): array
-    {
-        $resultIndexes = array_values($resultIndexes);
-        $indexes = $resultIndexes[0];
-
-        for ($i = 1; $i < count($resultIndexes); $i++) {
-            if ($isAndCondition) {
-                $indexes = array_intersect($indexes, $resultIndexes[$i]);
-            } else {
-                $indexes = array_merge($indexes, $resultIndexes[$i]);
-            }
-        }
-
-        return $indexes;
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $rows
-     * @return array<int, array<string, mixed>>
-     */
-    private function filterDummyRows(array $rows, string $where, array $allFields): array
-    {
-        [$conditions, , $isAndCondition] = $this->resolveDummyConditions($where);
-        $resultIndexes = [];
-
-        foreach ($conditions as $conditionIndex => $condition) {
-            [$key, $value, $isInCondition] = $this->parseDummyCondition($condition, $allFields, $where);
-            $resultIndexes[$conditionIndex] = $this->findDummyMatchedIndexes($rows, $key, $value, $isInCondition);
-        }
-
-        if (empty($resultIndexes)) {
-            return [];
-        }
-
-        $filteredRows = [];
-        foreach ($this->mergeDummyConditionIndexes($resultIndexes, $isAndCondition) as $index) {
-            $filteredRows[] = $rows[$index];
-        }
-
-        return $filteredRows;
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $rows
-     * @return array<int, array<string, mixed>>
-     */
-    private function orderDummyRows(array $rows, $orderby): array
-    {
-        if (!$orderby || count($rows) <= 1) {
-            return $rows;
-        }
-
-        $orderbyDesc = '';
-        if (strpos($orderby, ' ') !== false) {
-            [$orderby, $orderbyDesc] = explode(' ', $orderby, 2);
-        }
-        $isReverse = strtolower($orderbyDesc) === 'desc';
-
-        usort($rows, function ($a, $b) use ($orderby, $isReverse) {
-            $left = $a[$orderby];
-            $right = $b[$orderby];
-            $result = is_numeric($left) && is_numeric($right)
-                ? ($left <=> $right)
-                : strcmp((string) $left, (string) $right);
-
-            if ($isReverse) {
-                $result *= -1;
-            }
-
-            return $result;
-        });
-
-        return $rows;
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $rows
-     * @return array<int, array<string, mixed>>
-     */
-    private function sliceDummyRows(array $rows, $limit, $offset): array
-    {
-        if (!$offset && !$limit) {
-            return $rows;
-        }
-
-        return array_slice($rows, $offset ?? 0, $limit);
-    }
-
     private function getDummyRows(DummyModel $dummyModel, ?array $fields, $limit, $offset, $orderby)
     {
-        $where = $this->getWhereConditions();
-        $rows = $dummyModel->dummyRows();
-        if (!empty($where)) {
-            $allFields = $this->getFields();
-            foreach ($where as $w) {
-                $rows = $this->filterDummyRows($rows, $w, $allFields);
-            }
-        }
-
-        $rows = $this->orderDummyRows($rows, $orderby);
-        $rows = $this->sliceDummyRows($rows, $limit, $offset);
-        return $fields ? ArrayHelper::cutFields($rows, $fields) : $rows;
+        return (new DummyQuery(static::class, $this->getFields()))
+            ->run($dummyModel->dummyRows(), $this->getWhereConditions(), $fields, $limit, $offset, $orderby);
     }
 
     /**
