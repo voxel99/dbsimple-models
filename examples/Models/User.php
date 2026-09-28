@@ -6,6 +6,7 @@ namespace Jam\Models\Examples\Models;
 
 use Jam\Models\ModelList;
 use Jam\Models\Traits\Timestamps;
+use Jam\Models\Utils\ArrayHelper;
 
 /**
  * @property int $id
@@ -83,6 +84,23 @@ class User extends BaseModel
     public function checkPassword(string $password): bool
     {
         return password_verify($password, (string) $this->password_hash);
+    }
+
+    /**
+     * With-профиль пользователя. Посты подключаются через профиль поста —
+     * их набор связей описан в одном месте (Post::commonWithString) и переиспользуется.
+     */
+    public static function commonWithString(string $name = '', int $viewerId = 0, bool $posts = false): string
+    {
+        $with = ArrayHelper::extendsWithName(['profile!', 'role(id, code, title)'], $name);
+        if ($posts) {
+            // Только опубликованные, свежие сверху; всё, что внутри поста, — из профиля поста.
+            // Вложенному профилю передаём ПОЛНЫЙ путь: extendsWithName() к уже склеенной
+            // строке применять нельзя — префикс получил бы только первый её элемент.
+            [$postsPath] = ArrayHelper::extendsWithName(['posts[status = 1]:o(id DESC)'], $name);
+            $with[] = Post::commonWithString($postsPath, $viewerId);
+        }
+        return implode(', ', array_unique($with));
     }
 
     /** «Скоуп» — обычный метод, возвращающий построитель с условием. */
