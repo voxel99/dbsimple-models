@@ -1,9 +1,9 @@
 # Jam DbSimple Models
 
-[![PHP Version](https://img.shields.io/badge/php-%3E%3D8.1-8892BF.svg)](https://php.net/)
+[![PHP Version](https://img.shields.io/badge/php-%3E%3D8.4-8892BF.svg)](https://php.net/)
 [![License: LGPL 2.1](https://img.shields.io/badge/License-LGPL_2.1-blue.svg)](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html)
 
-A lightweight, high-performance Active Record and Model persistence layer for PHP 8.1+, built specifically on top of [`jam/dbsimple`](https://github.com/voxel99/dbsimple).
+A lightweight, high-performance Active Record and Model persistence layer for PHP 8.4+, built specifically on top of [`jam/dbsimple`](https://github.com/voxel99/dbsimple).
 
 ---
 

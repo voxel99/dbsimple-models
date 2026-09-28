@@ -297,7 +297,8 @@ class ConvertableHelperToArray
             if ($withExtra) {
                 $isWriteValue = $this->checkFlagField($withExtra, $field);
             }
-        } elseif (!is_null($value)) {
+        } elseif (!is_null($value) || ($this->getFlag(Model::FLAG_EMPTY) && $this->model->isField($field))) {
+            // Флаг e: null-значения обычных полей тоже попадают в результат
             $isWriteValue = true;
         }
         if (is_null($value) && (!$this->getFlag(Model::FLAG_EMPTY) || in_array($field, $this->model->getExtra()))) {

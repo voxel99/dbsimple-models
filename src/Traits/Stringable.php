@@ -20,37 +20,46 @@ trait Stringable
         $this->thisClassStringable = get_class($this);
     }
 
+    /**
+     * Скрывать ли по умолчанию значения с отрицательными ключами (служебные значения справочника).
+     * Переопределите в модели, если видимость зависит от контекста (например, роли текущего пользователя).
+     */
+    protected static function positiveKeysOnlyByDefault(): bool
+    {
+        return false;
+    }
+
+    private static function resolvePositiveKeysOnly(?bool $positiveKeysOnly): bool
+    {
+        return $positiveKeysOnly ?? static::positiveKeysOnlyByDefault();
+    }
+
     public static function stringsType($type, $positiveKeysOnly = null)
     {
+        $positiveKeysOnly = self::resolvePositiveKeysOnly($positiveKeysOnly);
         $key = self::getKey($type, $positiveKeysOnly);
         if (!isset(static::$stringsTypes[$key])) {
-            if (is_null($positiveKeysOnly)) {
-                $positiveKeysOnly = !user()->isAdmin();
-            }
             $strings = static::strings();
             if (!isset($strings[$type])) {
                 throw new Exception(sprintf("Wrong type in stringsType: %s", $type));
             }
             $ret = $strings[$type];
             if ($positiveKeysOnly) {
-                $ret = array_positive_keys($ret);
+                $ret = ArrayHelper::positiveKeys($ret);
             }
             static::$stringsTypes[$key] = $ret;
         }
         return static::$stringsTypes[$key];
     }
 
-    private static function getKey($type, $positiveKeysOnly): string
+    private static function getKey($type, bool $positiveKeysOnly): string
     {
-        $key = $type;
-        if (is_null($positiveKeysOnly)) {
-            $positiveKeysOnly = !user()->isAdmin();
-        }
-        return get_called_class() . ' ' . $key . ' ' . ($positiveKeysOnly ? 'P' : 'N');
+        return get_called_class() . ' ' . $type . ' ' . ($positiveKeysOnly ? 'P' : 'N');
     }
 
     public static function stringsFlipped($type, $positiveKeysOnly = null)
     {
+        $positiveKeysOnly = self::resolvePositiveKeysOnly($positiveKeysOnly);
         $key = self::getKey($type, $positiveKeysOnly);
         if (!isset(static::$stringsFlipped[$key])) {
             static::$stringsFlipped[$key] = array_flip(static::stringsType($type, $positiveKeysOnly));
@@ -66,7 +75,7 @@ trait Stringable
                 "Strings type '%s' for value '%s' not found. All values: [%s]",
                 $type,
                 $value,
-                array_to_description($stringsType)
+                ArrayHelper::toDescription($stringsType)
             ));
         }
         return $stringsType[$value];
@@ -171,7 +180,7 @@ trait Stringable
     public static function stringsDescriptionLine($type, $descriptionMethod = "", $positiveKeysOnly = null): string
     {
         $strDescriptions = static::stringsDescription($type, $descriptionMethod, $positiveKeysOnly);
-        return array_to_description($strDescriptions);
+        return ArrayHelper::toDescription($strDescriptions);
     }
 
     /**

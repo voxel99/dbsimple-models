@@ -78,7 +78,11 @@ trait Getable
             $this->leftJoins = [];
             $this->rightJoins = [];
             $this->lock = '';
+            $this->groupBy = '';
             $this->orderBy = null;
+            if ($this->useTrashed()) {
+                $this->collectionWithDeleted = false;
+            }
             $this->limitValue = null;
             $this->offsetValue = null;
         }
@@ -162,50 +166,39 @@ trait Getable
         return $this;
     }
 
-    private function addJoins(array $expression, $field = "joins"): static
+    /**
+     * @param 'joins'|'leftJoins'|'rightJoins' $field
+     * @param array<int, mixed> $args Аргументы join(): строка с плейсхолдерами и значения,
+     *                                либо один массив готовых выражений
+     */
+    private function addJoin(string $field, array $args): static
     {
+        $expression = $args[0] ?? null;
         if ($expression) {
-            $this->{$field} = array_merge($this->{$field}, $expression);
+            $this->{$field} = array_merge($this->{$field}, is_array($expression) ? $expression : [$args]);
         }
         return $this;
     }
 
     public function join(array|string|null $expression): static
     {
-        if ($expression) {
-            if (!is_array($expression)) {
-                $expression = [func_get_args()];
-            }
-            return $this->addJoins($expression);
-        }
-        return $this;
+        return $this->addJoin('joins', func_get_args());
     }
 
     public function leftJoin(array|string|null $expression): static
     {
-        if ($expression) {
-            if (!is_array($expression)) {
-                $expression = [func_get_args()];
-            }
-            return $this->addJoins($expression, "leftJoins");
-        }
-        return $this;
+        return $this->addJoin('leftJoins', func_get_args());
     }
 
     public function rightJoin(array|string|null $expression): static
     {
-        if ($expression) {
-            if (!is_array($expression)) {
-                $expression = [func_get_args()];
-            }
-            return $this->addJoins($expression, "rightJoins");
-        }
-        return $this;
+        return $this->addJoin('rightJoins', func_get_args());
     }
 
-    public function groupBy(string $groupBy)
+    public function groupBy(string $groupBy): static
     {
         $this->groupBy = $groupBy;
+        return $this;
     }
 
     public function getWhere()
@@ -274,22 +267,23 @@ trait Getable
         return $field;
     }
 
-    private function appendSoftDeleteWhere(string $where, array $allFields): string
+    private function appendSoftDeleteWhere(string $where): string
     {
-        if (!in_array($this->columnDeleted, $allFields)) {
+        // Условие зависит от трейта SoftDeletes, а не от списка полей: список может быть
+        // урезан через cutFields()/with('rel(a,b)'), и тогда удалённые записи попадали в выборку.
+        if (!$this->useTrashed() || $this->collectionWithDeleted) {
             return $where;
         }
 
-        if (!empty($this->collectionWithDeleted) || strpos($where, $this->columnDeleted) !== false) {
+        $column = $this->getDeletedAtColumn();
+        // Условие по колонке уже задано явно (например, выборка только удалённых)
+        if (strpos($where, $column) !== false) {
             return $where;
         }
 
         return $where
             . ($where ? " AND" : "")
-            . sprintf(
-                " %sdeleted_at IS NULL",
-                $this->alias ? $this->alias . "." : ""
-            );
+            . sprintf(" %s%s IS NULL", $this->alias ? $this->alias . "." : "", $column);
     }
 
     private function buildJoinsExpression(): string
@@ -298,7 +292,7 @@ trait Getable
         $joinPrefixes = [
             'joins' => 'JOIN',
             'leftJoins' => 'LEFT JOIN',
-            'rightJoins' => 'RIGTH JOIN'
+            'rightJoins' => 'RIGHT JOIN'
         ];
 
         foreach (array_keys($joinPrefixes) as $joinType) {
@@ -641,7 +635,6 @@ trait Getable
         if ($fields && !is_array($fields)) {
             $fields = ArrayHelper::stringCommasToArray($fields);
         }
-        $allFields = $this->getFields();
         if ($this instanceof DummyModel) {
             $rows = $this->getDummyRows($this, $fields, $limit, $offset, $orderby);
             $this->clear(!!$this->aggregateFunc || $this->persistent);
@@ -649,7 +642,7 @@ trait Getable
         }
 
         $where = $this->getWhereString();
-        $where = $this->appendSoftDeleteWhere($where, $allFields);
+        $where = $this->appendSoftDeleteWhere($where);
         $whereExpr = $where ? "WHERE " . $where : '';
         $joinsExpr = $this->buildJoinsExpression();
         [$orderby, $orderbyDesc] = $this->resolveOrderByParts($orderby);
@@ -678,7 +671,8 @@ trait Getable
                 . ($groupBy ? ' GROUP BY ' . $groupBy : '')
                 . ($orderby ? ' ORDER BY ' . $orderby . ' ' . $orderbyDesc : '')
                 . '{ LIMIT ?d}{ OFFSET ?d}' . $this->lock,
-                $limit ?: DBSIMPLE_SKIP,
+                // OFFSET без LIMIT — синтаксическая ошибка в MySQL и SQLite
+                $limit ?: ($offset ? PHP_INT_MAX : DBSIMPLE_SKIP),
                 $offset ?: DBSIMPLE_SKIP
             );
         } finally {
@@ -803,7 +797,6 @@ trait Getable
      */
     public function value($field, $orderby = null)
     {
-        [, , $offset, $orderby] = $this->resolveCollectionArgs(null, null, null, $orderby);
         $value = $this->first($field, $orderby);
         return $this->extractScalarValue($this->normalizeValueSource($value), $field);
     }

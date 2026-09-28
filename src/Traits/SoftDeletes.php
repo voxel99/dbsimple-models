@@ -5,7 +5,6 @@ namespace Jam\Models\Traits;
 use Jam\Models\Model;
 use Jam\Models\ModelException;
 
-use function request_time;
 
 trait SoftDeletes
 {
@@ -32,7 +31,7 @@ trait SoftDeletes
     {
         $this->on(Model::EVENT_DELETING, function () {
             if (!$this->forceDeleting) {
-                $this->{$this->columnDeleted} = request_time("Y-m-d H:i:s");
+                $this->{$this->columnDeleted} = static::freshTimestamp();
                 $this->update($this->columnDeleted);
                 return false;
             }

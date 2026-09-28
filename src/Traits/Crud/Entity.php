@@ -49,7 +49,7 @@ trait Entity
             $this->where($pk . ' IN (?a)', $id);
         } else {
             $this->{$this->pk} = $id;
-            $this->where($pk . ' = ?d', $id);
+            $this->where($pk . ' = ?', $id);
         }
         return $this;
     }

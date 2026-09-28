@@ -15,6 +15,25 @@ use function parse_url;
 
 class Strings
 {
+    private const TRANSLIT_MAP = [
+        'а' => 'a', 'б' => 'b', 'в' => 'v', 'г' => 'g', 'д' => 'd', 'е' => 'e', 'ё' => 'e', 'ж' => 'zh',
+        'з' => 'z', 'и' => 'i', 'й' => 'y', 'к' => 'k', 'л' => 'l', 'м' => 'm', 'н' => 'n', 'о' => 'o',
+        'п' => 'p', 'р' => 'r', 'с' => 's', 'т' => 't', 'у' => 'u', 'ф' => 'f', 'х' => 'h', 'ц' => 'ts',
+        'ч' => 'ch', 'ш' => 'sh', 'щ' => 'sch', 'ъ' => '', 'ы' => 'y', 'ь' => '', 'э' => 'e', 'ю' => 'yu',
+        'я' => 'ya',
+    ];
+
+    /**
+     * Транслитерация (кириллица -> латиница) для URL: нижний регистр,
+     * всё, кроме [a-z0-9], заменяется разделителем.
+     */
+    public static function translit(string $text, string $delimiter = '-'): string
+    {
+        $text = strtr(mb_strtolower($text, 'UTF-8'), self::TRANSLIT_MAP);
+        $text = preg_replace('/[^a-z0-9]+/', $delimiter, $text) ?? '';
+        return trim($text, $delimiter);
+    }
+
     public static function swapPairs($str)
     {
         $newStr = "";
@@ -146,39 +165,37 @@ class Strings
         return $ret;
     }
 
+    /**
+     * Заменяет символы $from на $to только вне скобок (или только внутри, если $inside).
+     *
+     * Работает побайтно, поэтому безопасна для UTF-8: все скобки и заменяемые символы — ASCII,
+     * а байты многобайтовых символов никогда не совпадают с ASCII.
+     * Открывающая и закрывающая скобка могут совпадать (например, ^...^).
+     */
     public static function replaceFromBraces($text, $from, $to, $openingBraces = null, $closingBraces = null, $inside = false)
     {
-        // Заменяем запятые вне скобок на разделитель в виде вертикальной линии
-        $length = mb_strlen($text);
-        $stack = [];
-        $newText = "";
-        if (is_null($openingBraces)) {
-            $openingBraces = ["(", "["];
-        } else {
-            $openingBraces = (array)$openingBraces;
-        }
-        if (is_null($closingBraces)) {
-            $closingBraces = [")", "]"];
-        } else {
-            $closingBraces = (array)$closingBraces;
-        }
-
+        $openingBraces = is_null($openingBraces) ? ["(", "["] : array_values((array)$openingBraces);
+        $closingBraces = is_null($closingBraces) ? [")", "]"] : array_values((array)$closingBraces);
+        $pairs = array_combine($openingBraces, $closingBraces);
         $from = (array)$from;
         $to = (array)$to;
 
+        $stack = [];
+        $newText = "";
+        $length = strlen($text);
         for ($i = 0; $i < $length; $i++) {
             $char = $text[$i];
-            if (in_array($char, $openingBraces)) {
-                array_push($stack, $char);
+            if ($stack && $char === $pairs[end($stack)]) {
+                array_pop($stack);
+            } elseif (isset($pairs[$char])) {
+                $stack[] = $char;
+            } elseif (in_array($char, $closingBraces, true)) {
+                // Непарная закрывающая скобка — оставляем как есть
             } else {
-                if (in_array($char, $closingBraces)) {
-                    array_pop($stack);
-                } else {
-                    $index = array_search($char, $from);
-                    $cond = $inside ? !empty($stack) : empty($stack);
-                    if ($cond && ($index !== false)) {
-                        $char = $to[$index];
-                    }
+                $index = array_search($char, $from, true);
+                $cond = $inside ? !empty($stack) : empty($stack);
+                if ($cond && ($index !== false)) {
+                    $char = $to[$index];
                 }
             }
             $newText .= $char;
@@ -198,7 +215,9 @@ class Strings
 
     public static function reSplitFromBraces($text, $from, $openingBraces = null, $closingBraces = null, $inside = false)
     {
-        $delimiter = chr(128);
+        // NUL не встречается ни в SQL-выражениях, ни в UTF-8 тексте (в отличие от chr(128),
+        // который является байтом продолжения UTF-8, например в «р» = D1 80)
+        $delimiter = "\0";
         $str = self::replaceFromBraces($text, $from, $delimiter, $openingBraces, $closingBraces, $inside);
         return ArrayHelper::stringCommasToArray($str, $delimiter);
     }

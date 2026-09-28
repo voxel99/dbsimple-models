@@ -61,12 +61,14 @@ trait Updatable
         $skipUpdate = !empty($upd[static::SKIP_UPDATE]) && $upd[static::SKIP_UPDATE] === static::SKIP_UPDATE;
         if (!$skipUpdate) {
             $upd = static::convertRecordsBeforeSaveToDb($upd);
+            // Первичный ключ не обновляем; если кроме него менять нечего — запроса нет
+            unset($upd[$this->pk]);
             if ($upd) {
-                unset($upd[$this->pk]);
+                // `?`, а не `?d`: первичный ключ может быть строковым
                 $this->db->query(
                     'UPDATE ?_'
                     . $this->table()
-                    . ' SET ?a WHERE ?# = ?d',
+                    . ' SET ?a WHERE ?# = ?',
                     $upd,
                     $this->pk(),
                     $id
@@ -81,7 +83,7 @@ trait Updatable
     {
         $id = $this->{$this->pk};
         $this->db->query(
-            'UPDATE ' . ($delayed ? 'DELAYED ' : '') . '?_' . $this->table() . ' SET ?# = ?#+?d WHERE ?# = ?d',
+            'UPDATE ' . ($delayed ? 'DELAYED ' : '') . '?_' . $this->table() . ' SET ?# = ?#+?d WHERE ?# = ?',
             $field,
             $field,
             $value,

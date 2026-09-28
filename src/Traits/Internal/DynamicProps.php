@@ -362,6 +362,7 @@ trait DynamicProps
         }
 
         $this->storeDynamicAssignedValue($jsonField, $payload, CastClosure::CAST_EXTERNAL);
+        $this->forgetComputedValues();
         $this->callChangeThisMethod($jsonField);
     }
 
@@ -470,7 +471,24 @@ trait DynamicProps
         $value = $this->applyDynamicChangeMethod($prop, $value, $dataLayer);
         $value = $this->normalizeRelationAssignedValue($prop, $value, $map);
         $this->storeDynamicAssignedValue($prop, $value, $dataLayer);
+        $this->forgetComputedValues();
         $this->callChangeThisMethod($prop);
+    }
+
+    /**
+     * Сбрасывает закэшированные значения вычислимых полей: после изменения данных модели
+     * $model->computed_prop должен пересчитываться, а не возвращать устаревшее значение.
+     * Updatable- и explicit-поля не трогаем — их значения могут быть присвоены явно.
+     */
+    private function forgetComputedValues(): void
+    {
+        $computed = $this->getComputed();
+        if (!$computed) {
+            return;
+        }
+        foreach (array_diff($computed, $this->getUpdatable(), $this->getExplicit()) as $prop) {
+            unset($this->jamDataEx[$prop]);
+        }
     }
 
     /**
@@ -820,7 +838,8 @@ trait DynamicProps
         if (!is_array($excludes)) {
             $excludes = ArrayHelper::stringCommasToArray($excludes);
         }
-        $this->jamFields = array_diff($this->jamFields, $excludes);
+        // getFields(), а не $this->jamFields: список полей инициализируется лениво
+        $this->jamFields = array_values(array_diff($this->getFields(), $excludes));
         foreach ($excludes as $excludeField) {
             if (isset($this->jamDataDb[$excludeField])) {
                 unset($this->jamDataDb[$excludeField]);

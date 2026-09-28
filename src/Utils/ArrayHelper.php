@@ -13,6 +13,32 @@ class ArrayHelper
     private static $explodedValues = [];
 
     /**
+     * Оставляет только элементы с неотрицательными ключами.
+     * Отрицательные ключи в справочниках Stringable/Intable используются для «служебных» значений.
+     *
+     * @param array<int|string, mixed> $array
+     * @return array<int|string, mixed>
+     */
+    public static function positiveKeys(array $array): array
+    {
+        return array_filter($array, static fn($key) => !is_numeric($key) || $key >= 0, ARRAY_FILTER_USE_KEY);
+    }
+
+    /**
+     * Человекочитаемое описание массива для сообщений об ошибках: "k1: v1, k2: v2"
+     *
+     * @param array<int|string, mixed> $array
+     */
+    public static function toDescription(array $array): string
+    {
+        $parts = [];
+        foreach ($array as $key => $value) {
+            $parts[] = $key . ': ' . (is_scalar($value) ? $value : json_encode($value));
+        }
+        return implode(', ', $parts);
+    }
+
+    /**
      * Вставка элемента в одномерный массив
      *
      * @param array<mixed> $array Исходный массив

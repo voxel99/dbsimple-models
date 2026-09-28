@@ -28,8 +28,9 @@ trait Insertable
                 $ins[$k] = static::convertRecordsBeforeSaveToDb($ins[$k]);
             }
         } else {
+            // Обработчик creating может вернуть false — вставка отменяется
             $ins = $this->fire(Model::EVENT_CREATING, $ins);
-            $ins = static::convertRecordsBeforeSaveToDb($ins);
+            $ins = $ins ? static::convertRecordsBeforeSaveToDb($ins) : false;
         }
 
         $id = 0;

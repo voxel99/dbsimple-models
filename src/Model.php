@@ -109,6 +109,13 @@ class Model extends ModelAbstract implements IRelationList
     protected string $extra = '';
 
     /**
+     * Приведение типов полей: ['int' => 'id, user_id', 'json' => 'settings', ...]
+     * Нетипизированное свойство: наследники объявляют его как `protected $types = [...]`.
+     * @var array<string, string|array<int|string, mixed>>
+     */
+    protected $types = [];
+
+    /**
      * Модель будет сохранять внутреннее состояние после возврата результата
      * @var bool
      */
@@ -192,6 +199,15 @@ class Model extends ModelAbstract implements IRelationList
     public function useTrashed(): bool
     {
         return false;
+    }
+
+    /**
+     * Текущее время в формате БД. Используется Timestamps, SoftDeletes и updateRaw().
+     * Переопределите в базовой модели проекта, если нужен другой источник времени.
+     */
+    public static function freshTimestamp(): string
+    {
+        return date('Y-m-d H:i:s');
     }
 
     public static function dbEsc(string $field): string
@@ -289,7 +305,7 @@ class Model extends ModelAbstract implements IRelationList
                     if (!empty($ids)) {
                         if ($pivot) {
                             $pivot->where(
-                                '?# = ?d AND ?# IN (?a)',
+                                '?# = ? AND ?# IN (?a)',
                                 $R->pivotLocalKey(),
                                 $thisId,
                                 $R->pivotOtherKey(),
@@ -345,35 +361,29 @@ class Model extends ModelAbstract implements IRelationList
     }
 
     /**
-     * Check relation
-     * @param string $alias
+     * DummyModel только для чтения: связанные записи должны совпадать со строками dummyRows().
      *
-     * @return void
      * @throws ModelException
      */
     public function checkDummyModelRelation(string $alias): void
     {
-        if (!empty($this->{$alias})) {
-            $className = $this->getClassNameByAlias($alias);
-            if ($className) {
-                $dummyModel = new $className();
-                $rows = $dummyModel->dummyRows();
-                $pk = $dummyModel->pk();
-                $checkedRows = $this->{$alias}->toArray();
-                foreach ($checkedRows as $checkedRow) {
-                    $found = false;
-                    $res = false;
-                    foreach ($rows as $row) {
-                        if ($row[$pk] === $checkedRow[$pk]) {
-                            $res = ArrayHelper::isSubset($row, $checkedRow);
-                            $found = true;
-                            break;
-                        }
-                    }
-                    if (!$found || !$res) {
-                        throw new ModelException('DummyModel is readonly');
-                    }
-                }
+        $related = $this->{$alias};
+        $className = $this->getClassNameByAlias($alias);
+        if (empty($related) || !$className) {
+            return;
+        }
+
+        /** @var Model&DummyModel $dummyModel */
+        $dummyModel = new $className();
+        $pk = $dummyModel->pk();
+        $rowsByPk = array_column($dummyModel->dummyRows(), null, $pk);
+        // belongs/hasOne — одна модель, hasMany — ModelList
+        $checkedRows = $related instanceof ModelList ? $related->toArray() : [$related->toArray()];
+
+        foreach ($checkedRows as $checkedRow) {
+            $row = $rowsByPk[$checkedRow[$pk] ?? null] ?? null;
+            if ($row === null || !ArrayHelper::isSubset($row, $checkedRow)) {
+                throw new ModelException('DummyModel is readonly');
             }
         }
     }
@@ -420,6 +430,9 @@ class Model extends ModelAbstract implements IRelationList
             foreach ($this->belongs as $R) {
                 if ($this->relationIsDummyModel($R->alias())) {
                     $this->checkDummyModelRelation($R->alias());
+                    if ($this->{$R->alias()} instanceof Model) {
+                        $this->{$R->localKey()} = $this->{$R->alias()}->{$R->otherKey()};
+                    }
                 } else {
                     $this->saveRelation($R);
                 }
@@ -549,7 +562,7 @@ class Model extends ModelAbstract implements IRelationList
             in_array($instance->columnUpdated, $instance->getFields()) &&
             !isset($data[$instance->columnUpdated])
         ) {
-            $data[$instance->columnUpdated] = request_time('Y-m-d H:i:s');
+            $data[$instance->columnUpdated] = static::freshTimestamp();
         }
         return $instance->db->query(
             'UPDATE ?# SET ?a WHERE ?# IN (?a)',

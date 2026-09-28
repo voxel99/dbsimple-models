@@ -39,7 +39,7 @@ trait Deletable
         }
         if ($this->fire(Model::EVENT_DELETING, $this)) {
             $stat = $this->db->query(
-                'DELETE FROM ?_' . $this->table() . ' WHERE ?# = ?d',
+                'DELETE FROM ?_' . $this->table() . ' WHERE ?# = ?',
                 $this->pk(),
                 $id
             );

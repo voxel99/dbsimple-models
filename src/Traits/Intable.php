@@ -31,7 +31,7 @@ trait Intable
     {
         $intsType = static::intsType($type);
         if (!isset($intsType[$value])) {
-            throw new Exception(sprintf("Ints type '%s' for value '%s' not found. All values: [%s]", $type, $value, array_to_description($intsType)));
+            throw new Exception(sprintf("Ints type '%s' for value '%s' not found. All values: [%s]", $type, $value, ArrayHelper::toDescription($intsType)));
         }
         return $intsType[$value];
     }

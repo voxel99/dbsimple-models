@@ -2,6 +2,8 @@
 
 namespace Jam\Models\Traits;
 
+use Jam\Models\Utils\Strings;
+
 trait SlugEvaluatable
 {
     protected string $columnTitle = 'title';
@@ -38,7 +40,7 @@ trait SlugEvaluatable
     // Правило преобразования заголовка в транслит
     public static function translit($title): string
     {
-        $translit = translit($title, "-");
+        $translit = Strings::translit((string) $title, "-");
         $translit = preg_replace('#[-]{2,}#', '-', $translit);
         $translit = trim($translit, "-");
         if ($translit && !preg_match('#[^\d]+#', $translit)) {
