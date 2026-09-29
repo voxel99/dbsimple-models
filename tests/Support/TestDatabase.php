@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Jam\Models\Tests\Support;
 
 use Jam\DbSimple\Adapter\Mypdo;
+use Jam\DbSimple\Adapter\Sqlite;
 use Jam\DbSimple\Database;
 use PDO;
 use RuntimeException;
@@ -52,8 +53,8 @@ final class TestDatabase
                 $parsed['pass'] ?? ''
             );
         } else {
-            $db = new PdoSqlite(':memory:');
-            $pdo = $db->pdo();
+            $db = new Sqlite(['path' => ':memory:']);
+            $pdo = $db->getPdo();
         }
 
         Schema::create($pdo);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Jam\Models\Tests\Support;
 
+use Jam\DbSimple\Adapter\Sqlite;
 use Jam\Models\Model;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -17,7 +18,7 @@ abstract class ModelTestCase extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $db = new PdoSqlite(':memory:');
+        $db = new Sqlite(['path' => ':memory:']);
         $db->setLogger(static function ($db, $sql): void {
             if (is_string($sql) && !str_starts_with(ltrim($sql), '--')) {
                 throw new RuntimeException('Unit test must not execute SQL: ' . $sql);
