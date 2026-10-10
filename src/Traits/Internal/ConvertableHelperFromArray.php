@@ -48,7 +48,8 @@ class ConvertableHelperFromArray
     private function convertProp(&$prop, $data, $makeArray)
     {
         $cast = [];
-        if ($prop instanceof Model) {
+        $isModel = $prop instanceof Model;
+        if ($isModel) {
             $cast = $prop->getCast();
         }
 
@@ -64,6 +65,17 @@ class ConvertableHelperFromArray
             // Данные строки могут быть развёрнуты в модель
             if (is_string($v) && $modelObject instanceof StringableInterface && $modelObject::hasString($k, $v)) {
                 $v = $modelObject::fromString($k, $v);
+            }
+            // Быстрый путь: скаляр в поле модели (не отношение) записывается как есть — ровно то,
+            // что вернул бы makeNode(getPropClassData()), без промежуточного объекта и вызовов.
+            // Пользовательский каст (closure) идёт общим путём: там создаётся его экземпляр.
+            if (
+                $isModel && is_scalar($v)
+                && (!isset($cast[$k]) || ($cast[$k]->type ?? null) !== CastClosure::TYPE_CLOSURE)
+                && !$prop->isRelationProp($k)
+            ) {
+                $this->setKVPropNode($prop, $k, $v, $makeArray);
+                continue;
             }
             $convertableData = $this->getPropClassData($prop, $k, $v, $cast);
             if ($convertableData->skipNode) {

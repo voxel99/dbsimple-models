@@ -7,7 +7,8 @@
  *
  * Фикстуры: tests/Fixtures/Perf (Post ~60 полей / ~25 отношений, вложенные User → avatar → thumbs,
  * теги через pivot, подборки, полиморфные вложения с крупным upload, превью, комментарии).
- * Для каждого сценария печатается медиана времени из N прогонов и пиковая память сценария.
+ * Для каждого сценария печатается медиана и минимум wall-времени из N прогонов, медиана
+ * CPU-времени процесса (getrusage, устойчивее к шуму соседних процессов) и пиковая память.
  */
 
 declare(strict_types=1);
@@ -86,24 +87,31 @@ foreach ($scenarios as $key => $scenario) {
     // Прогрев: автозагрузка классов и статические кеши заполняются до замера
     $scenario['run']($scenario['setup']());
     $times = [];
+    $cpus = [];
     $mems = [];
     for ($r = 0; $r < $runs; $r++) {
         $input = $scenario['setup']();
         gc_collect_cycles();
         memory_reset_peak_usage();
         $memBefore = memory_get_usage();
+        $ru = getrusage();
         $t = hrtime(true);
         $out = $scenario['run']($input);
         $times[] = (hrtime(true) - $t) / 1e6;
+        $ru2 = getrusage();
+        $cpus[] = ($ru2['ru_utime.tv_sec'] - $ru['ru_utime.tv_sec'] + $ru2['ru_stime.tv_sec'] - $ru['ru_stime.tv_sec']) * 1e3
+            + ($ru2['ru_utime.tv_usec'] - $ru['ru_utime.tv_usec'] + $ru2['ru_stime.tv_usec'] - $ru['ru_stime.tv_usec']) / 1e3;
         $mems[] = memory_get_peak_usage() - $memBefore;
         unset($out, $input);
     }
     sort($times);
+    sort($cpus);
     sort($mems);
     $results[$key] = [
         'title' => $scenario['title'],
         'ms' => round($times[intdiv(count($times), 2)], 2),
         'min_ms' => round($times[0], 2),
+        'cpu_ms' => round($cpus[intdiv(count($cpus), 2)], 2),
         'mem_kb' => (int) round($mems[intdiv(count($mems), 2)] / 1024),
     ];
 }
@@ -114,7 +122,7 @@ if (isset($opts['json'])) {
 }
 
 printf("PHP %s, opcache %s, runs=%d, posts=%d\n\n", PHP_VERSION, ini_get('opcache.enable_cli') ? 'on' : 'off', $runs, $postsCount);
-printf("%-4s %-62s %10s %10s %10s\n", '', 'scenario', 'median ms', 'min ms', 'peak KB');
+printf("%-4s %-62s %10s %10s %10s %10s\n", '', 'scenario', 'median ms', 'min ms', 'cpu ms', 'peak KB');
 foreach ($results as $key => $r) {
-    printf("%-4s %s %10.2f %10.2f %10d\n", $key, mb_str_pad(mb_strimwidth($r['title'], 0, 62), 62), $r['ms'], $r['min_ms'], $r['mem_kb']);
+    printf("%-4s %s %10.2f %10.2f %10.2f %10d\n", $key, mb_str_pad(mb_strimwidth($r['title'], 0, 62), 62), $r['ms'], $r['min_ms'], $r['cpu_ms'], $r['mem_kb']);
 }

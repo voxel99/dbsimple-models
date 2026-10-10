@@ -12,6 +12,10 @@ trait Relatable
 {
     public static $jamRelationsClasses = [];
     /**
+     * @var array<class-string, bool> см. jamDetectPlainRelations()
+     */
+    private static array $jamPlainRelations = [];
+    /**
      * Отношения типа один-ко-многим
      * @var array of Relation
      */
@@ -136,13 +140,19 @@ trait Relatable
         if (!is_string($prop)) {
             return null;
         }
-        // Поиск без array_merge всех отношений на каждый вызов (горячий путь __set/fromArray).
-        // Порядок как у getAllRelations(): при совпадении алиасов побеждает последний массив.
-        // Целочисленные ключи array_merge перенумеровывает — для них, как и для модели
-        // с переопределённым getAllRelations(), прежний путь.
-        if ((string)(int)$prop === $prop || !$this->jamIsOwnMethod('getAllRelations')) {
+        if (is_numeric($prop) || !(self::$jamPlainRelations[static::class] ?? $this->jamDetectPlainRelations())) {
             return $this->getAllRelations()[$prop] ?? null;
         }
+        return $this->jamRelationByAliasDirect($prop);
+    }
+
+    /**
+     * Поиск отношения без array_merge всех отношений (горячий путь __set/fromArray).
+     * Порядок как у getAllRelations(): при совпадении алиасов побеждает последний массив.
+     * Только для нечисловых алиасов: целочисленные ключи array_merge перенумеровывает.
+     */
+    private function jamRelationByAliasDirect(string $prop): ?Relation
+    {
         if (array_key_exists($prop, $this->belongs)) {
             return $this->belongs[$prop] ?? null;
         }
@@ -150,6 +160,19 @@ trait Relatable
             return $this->hasOne[$prop] ?? null;
         }
         return $this->hasMany[$prop] ?? null;
+    }
+
+    /**
+     * Класс модели не переопределяет getAllRelations()/getRelationByAlias()/isRelationProp(),
+     * и их можно обходить на горячем пути. Иначе — прежний путь через эти методы.
+     */
+    private function jamDetectPlainRelations(): bool
+    {
+        $plain = true;
+        foreach (['getAllRelations', 'getRelationByAlias', 'isRelationProp'] as $method) {
+            $plain = $plain && (new \ReflectionMethod($this, $method))->getDeclaringClass()->getName() === self::class;
+        }
+        return self::$jamPlainRelations[static::class] = $plain;
     }
 
     public function getRelationByClass($className, $row = null)
@@ -168,6 +191,13 @@ trait Relatable
 
     public function isRelationProp($prop)
     {
+        if (is_string($prop) && !is_numeric($prop) && (self::$jamPlainRelations[static::class] ?? $this->jamDetectPlainRelations())) {
+            // Вызывается на каждый ключ гидрации — без лишнего вызова getRelationByAlias()
+            if (isset($this->belongs[$prop])) {
+                return true;
+            }
+            return (bool) $this->jamRelationByAliasDirect($prop);
+        }
         return (bool) $this->getRelationByAlias($prop);
     }
 
