@@ -248,10 +248,18 @@ class ConvertableHelperToArray
     private function getRelationByNulledValue($field, $value): ?Relation
     {
         $withField = $this->with[$field] ?? null;
-        if (is_null($value) && !empty($withField['ret_empty']) && !empty($this->relations[$field])) {
+        if ($this->isEmptyRelationValue($value) && !empty($withField['ret_empty']) && !empty($this->relations[$field])) {
             return $this->relations[$field];
         }
         return null;
+    }
+
+    /**
+     * Пустая связь: не загружена/не найдена (null) или загружена пустым списком
+     */
+    private function isEmptyRelationValue($value): bool
+    {
+        return is_null($value) || ($value instanceof ModelList && $value->isEmpty());
     }
 
     private function checkHidden($field, $withHidden)
@@ -276,7 +284,10 @@ class ConvertableHelperToArray
             $value = $this->getValueByRelation($R);
             $isWriteValue = true;
         } elseif (($value instanceof Model) || ($value instanceof ModelList)) {
-            $isWriteValue = $this->checkFlagField($withDependences, $field);
+            // Пустой список связи (with() не нашёл записей) не выводим, как и незагруженную связь;
+            // [] — только по маркеру ret_empty (alias!)
+            $isWriteValue = $this->checkFlagField($withDependences, $field)
+                && !(isset($this->relations[$field]) && $this->isEmptyRelationValue($value));
         } elseif ($isExplicit || ($withComputable && in_array($field, $this->model->getComputed()))) {
             if (!in_array($field, $this->model->getUpdatable()) || !isset($value)) {
                 try {

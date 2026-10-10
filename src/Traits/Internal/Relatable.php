@@ -4,6 +4,7 @@ namespace Jam\Models\Traits\Internal;
 
 use Exception;
 use Jam\Models\Model;
+use Jam\Models\ModelAbstract;
 use Jam\Models\ModelException;
 use Jam\Models\ModelList;
 use Jam\Models\Relation;
@@ -26,6 +27,11 @@ trait Relatable
      * @var array of Relation
      */
     protected $belongs = [];
+    /**
+     * Алиасы связей, данные которых получены (через with() или fromArray), в том числе пустые
+     * @var array<string, true>
+     */
+    private array $jamLoadedRelations = [];
 
     public function getRelations($type)
     {
@@ -50,8 +56,14 @@ trait Relatable
         if ($throwException && $isField) {
             throw new ModelException(sprintf('Ralation alias and field name have equal names: %s (Model: %s)', $alias, get_class($this)));
         }
+        // Присваивание computed-свойству молча игнорируется (DynamicProps::__set),
+        // поэтому загруженные через with() данные такой связи терялись бы
+        $isComputed = $this->isComputed($alias);
+        if ($throwException && $isComputed) {
+            throw new ModelException(sprintf('Relation alias and computed property have equal names: %s (Model: %s)', $alias, get_class($this)));
+        }
 
-        return !$isField;
+        return !$isField && !$isComputed;
     }
 
     public function hasOne($class, $alias, $localKey = "", $otherKey = "", $wheres = [])
@@ -107,6 +119,28 @@ trait Relatable
             $ret[$alias] = $R;
         }
         return $ret;
+    }
+
+    /**
+     * Загружена ли связь. В отличие от проверки на null, отличает «загружено, но пусто»
+     * (with() не нашёл связанных записей) от «не загружено» (связь не запрашивалась).
+     */
+    public function isRelationLoaded(string $alias): bool
+    {
+        return isset($this->jamLoadedRelations[$alias]) || $this->$alias instanceof ModelAbstract;
+    }
+
+    /**
+     * @internal Вызывается при гидрации модели (ConvertableHelperFromArray)
+     */
+    public function markRelationLoaded(string $alias): void
+    {
+        $this->jamLoadedRelations[$alias] = true;
+    }
+
+    private function forgetRelationLoaded(string $alias): void
+    {
+        unset($this->jamLoadedRelations[$alias]);
     }
 
     public function getLocalKeys()

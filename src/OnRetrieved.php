@@ -428,10 +428,27 @@ class OnRetrieved
     {
         $classes = $this->getRelationClasses($R);
         // Связанных классов может не быть, например, для текстовых атачей (upload_id=0)
-        if (!$classes) {
-            return;
+        if ($classes) {
+            $this->dispatchValuesByClass($R, $this->getValuesByClass($R), $returnRows);
         }
-        $this->dispatchValuesByClass($R, $this->getValuesByClass($R), $returnRows);
+        $this->fillEmptyRelation($R, $returnRows);
+    }
+
+    /**
+     * Строкам, у которых нет связанных записей, проставляет пустое значение связи:
+     * [] для hasMany (в модели станет пустым ModelList), null для hasOne/belongs.
+     * Так «загружено, но пусто» отличается от «не загружено» (см. Model::isRelationLoaded)
+     * и потребители не уходят в N+1, догружая связь построчно.
+     */
+    private function fillEmptyRelation(Relation $R, array &$returnRows): void
+    {
+        $alias = $R->alias();
+        $empty = $R->isTypeMany() ? [] : null;
+        foreach ($returnRows as $k => $row) {
+            if (!array_key_exists($alias, $row)) {
+                $returnRows[$k][$alias] = $empty;
+            }
+        }
     }
 
     /**

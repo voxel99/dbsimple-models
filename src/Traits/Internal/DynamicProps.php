@@ -139,6 +139,7 @@ trait DynamicProps
         }
         unset($this->jamDataDb[$prop]);
         unset($this->jamDataEx[$prop]);
+        $this->forgetRelationLoaded($prop);
     }
 
     private function castTo($prop, $value, $castEx)

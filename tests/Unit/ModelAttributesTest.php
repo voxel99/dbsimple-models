@@ -82,6 +82,48 @@ final class ModelAttributesTest extends ModelTestCase
         };
     }
 
+    public function testRelationAliasMustNotClashWithComputed(): void
+    {
+        // Иначе данные из with() молча терялись бы: присваивание computed-свойству игнорируется
+        $this->expectException(ModelException::class);
+        $this->expectExceptionMessage('Relation alias and computed property have equal names: author');
+        new class extends Model {
+            protected string $fields = 'id, user_id';
+            protected string $computed = 'author';
+
+            public function __construct($data = null)
+            {
+                $this->belongs(User::class, 'author', 'user_id', 'id');
+                parent::__construct($data);
+            }
+
+            public function author(): string
+            {
+                return '';
+            }
+        };
+    }
+
+    public function testRelationLoadedState(): void
+    {
+        $user = new User(['id' => 1]);
+        $this->assertFalse($user->isRelationLoaded('posts'));
+
+        $user->posts = [['id' => 1, 'title' => 'A']];
+        $this->assertTrue($user->isRelationLoaded('posts'));
+
+        unset($user->posts);
+        $this->assertFalse($user->isRelationLoaded('posts'));
+
+        // Пустые данные связи в массиве инициализации: связь загружена, но пуста
+        $user = new User(['id' => 1, 'posts' => [], 'profile' => null]);
+        $this->assertTrue($user->isRelationLoaded('posts'));
+        $this->assertTrue($user->posts->isEmpty());
+        $this->assertTrue($user->isRelationLoaded('profile'));
+        $this->assertNull($user->profile);
+        $this->assertSame(['id' => 1], $user->toArray());
+    }
+
     public function testGuardedFieldCannotBeAssignedButCanBeHydrated(): void
     {
         $user = new User(['password_hash' => 'hydrated-from-db']);

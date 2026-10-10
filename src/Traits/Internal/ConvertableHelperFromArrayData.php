@@ -8,7 +8,6 @@ class ConvertableHelperFromArrayData
     public $classArgs = [];
     public $castToArray = false;
     public $v;
-    public $skipNode = false;
 
     public function __construct($v)
     {
