@@ -141,11 +141,11 @@ class ConvertableHelperToArray
                 $fields = ArrayHelper::stringCommasToArray($fields);
             }
             $this->srcFields = $fields;
-            $computableFlag = $this->getFlag(Model::FLAG_COMPUTABLE);
+            $computableFlag = $this->flagValues[Model::FLAG_COMPUTABLE];
             $computableFields = is_bool($computableFlag) ? ($computableFlag ? $this->model->getComputed() : []) : $this->getFlagFields($computableFlag);
-            $hiddenFlag = $this->getFlag(Model::FLAG_HIDDEN);
+            $hiddenFlag = $this->flagValues[Model::FLAG_HIDDEN];
             $hiddenFields = is_bool($hiddenFlag) ? ($hiddenFlag ? $this->model->getHidden() : []) : $this->getFlagFields($hiddenFlag);
-            $extraFlag = $this->getFlag(Model::FLAG_EXTRA);
+            $extraFlag = $this->flagValues[Model::FLAG_EXTRA];
             $extraFields = is_bool($extraFlag) ? ($extraFlag ? $this->model->getExtra() : []) : $this->getFlagFields($extraFlag);
             $fields = array_unique(array_merge($fields, $computableFields ?: [], $hiddenFields ?: [], $extraFields ?: []));
         }
@@ -159,13 +159,6 @@ class ConvertableHelperToArray
             $flagFields = ArrayHelper::stringCommasToArray($flagFields);
         }
         return is_array($flagFields) ? $flagFields : null;
-    }
-
-    private function getFlag($flagName)
-    {
-        return array_key_exists($flagName, $this->flagValues)
-            ? $this->flagValues[$flagName]
-            : $this->model->getFlag($this->flags, $flagName);
     }
 
     private function checkFlagField($flagValue, $field)
@@ -219,7 +212,7 @@ class ConvertableHelperToArray
             $traceFields = array_diff($traceFields, (array)$this->exclude);
         }
 
-        if ($this->getFlag(Model::FLAG_INTERNAL_DATABASE)) {
+        if ($this->flagValues[Model::FLAG_INTERNAL_DATABASE]) {
             $traceFields = array_map(function ($item) {
                 return strpos($item, ":") ? $item : $item . ":" . CastClosure::CAST_DB;
             }, $traceFields);
@@ -237,7 +230,7 @@ class ConvertableHelperToArray
     private function getPivotValue($value, &$isWriteValue): array
     {
         $newValue = [];
-        $withPivot = $this->getFlag(Model::FLAG_PIVOT); // p
+        $withPivot = $this->flagValues[Model::FLAG_PIVOT]; // p
         if (!$withPivot) {
             $isWriteValue = false;
         } else {
@@ -472,11 +465,11 @@ class ConvertableHelperToArray
     public function processAfterConvert(array $ret, Model $modelObject, $debug = false)
     {
         // Приводим числовые идентификаторы к строковым (если задано преобразование и действие)
-        if ($this->getFlag(Model::FLAG_STRINGABLE)) {
+        if ($this->flagValues[Model::FLAG_STRINGABLE]) {
             $ret = $this->processStringable($ret, $modelObject);
         }
         // Приводим типы
-        if (!$this->getFlag(Model::FLAG_INTERNAL_DATABASE)) {
+        if (!$this->flagValues[Model::FLAG_INTERNAL_DATABASE]) {
             $ret = $this->processCast($ret, $modelObject, $debug);
         }
         return $ret;
@@ -486,7 +479,7 @@ class ConvertableHelperToArray
     {
         $this->debug = $debug;
         $modelObject = $this->model;
-        if ($this->getFlag(Model::FLAG_SCALAR) && ($this->model instanceof ScalarableInterface)) {
+        if ($this->flagValues[Model::FLAG_SCALAR] && ($this->model instanceof ScalarableInterface)) {
             /** @var class-string<ScalarableInterface> $scalarableClass */
             $scalarableClass = $modelObject::class;
             $ret = $scalarableClass::toScalar($this->model);
@@ -499,20 +492,20 @@ class ConvertableHelperToArray
             }
             $ret = $this->processAfterConvert($ret, $this->model, $debug);
         }
-        if ($this->getFlag(Model::FLAG_TITLES)) {
+        if ($this->flagValues[Model::FLAG_TITLES]) {
             $ret[Model::TITLES_FIELD] = $this->model->__getTitles($this->srcFields);
         }
-        if ($this->getFlag(Model::FLAG_IDENTIFIERS)) {
+        if ($this->flagValues[Model::FLAG_IDENTIFIERS]) {
             $ret[Model::IDENTIFIERS_FIELD] = $this->model->__getIdentifiers($this->srcFields);
         }
 
         if ($this->srcFields && $this->cutFields) {
             $returnKeys = array_flip($this->srcFields);
-            // + check? $this->getFlag(Model::FLAG_PIVOT)
+            // + check? $this->flagValues[Model::FLAG_PIVOT]
             foreach ([Model::PIVOT_FIELD, Model::TITLES_FIELD, Model::IDENTIFIERS_FIELD] as $f) {
                 $returnKeys[$f] = true;
             }
-            if ($this->getFlag(Model::FLAG_DEPENDENCIES)) {
+            if ($this->flagValues[Model::FLAG_DEPENDENCIES]) {
                 $relationAliases = $modelObject->getRelationAliases();
                 if (!empty($relationAliases)) {
                     foreach ($relationAliases as $relationAlias) {
