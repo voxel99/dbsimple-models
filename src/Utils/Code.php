@@ -60,9 +60,20 @@ class Code
         return basename(str_replace('\\', '/', $class));
     }
 
+    /** @var array<string, array<string, string>> */
+    private static array $implementsCache = [];
+
     public static function isImplements($className, $interfaceName)
     {
-        $list = class_implements($className);
+        // Список интерфейсов класса не меняется — кешируем class_implements() по имени класса
+        $list = is_string($className) ? (self::$implementsCache[$className] ?? null) : null;
+        if ($list === null) {
+            $list = class_implements($className);
+            // Несуществующий класс не кешируем: предупреждение и ошибка остаются прежними
+            if (is_string($className) && is_array($list)) {
+                self::$implementsCache[$className] = $list;
+            }
+        }
         return in_array($interfaceName, $list);
     }
 

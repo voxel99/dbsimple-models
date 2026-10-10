@@ -139,7 +139,12 @@ class ConvertableHelperFromArray
                 if (!$node || !($node instanceof Model)) {
                     throw new ModelException(sprintf("%s::fromScalar must return Model instance", $className));
                 }
+            } elseif (class_exists($convertableHelperData->className)) {
+                // То же, что ReflectionClass::newInstanceArgs(), без создания объекта Reflection
+                $className = $convertableHelperData->className;
+                $node = new $className(...$convertableHelperData->classArgs);
             } else {
+                // Несуществующий класс: прежнее исключение (ReflectionException)
                 $Reflection = new \ReflectionClass($convertableHelperData->className);
                 $node = $Reflection->newInstanceArgs($convertableHelperData->classArgs);
             }

@@ -87,6 +87,14 @@ trait DynamicProps
      */
     private static array $jamJsonTopLevelKeyRulesCache = [];
     /**
+     * @var array<class-string, array{0: array<int, mixed>, 1: array<string, true>|null}>
+     */
+    private static array $jamFieldIndexCache = [];
+    /**
+     * @var array<class-string, bool>
+     */
+    private static array $jamHasChangeThis = [];
+    /**
      * Правила JSON-ключей 1 уровня (см. jsonTopLevelKeyRules()) и описание кастов, из которого они получены
      * @var array<string, array<int, string>>
      */
@@ -275,6 +283,32 @@ trait DynamicProps
         return null;
     }
 
+    /**
+     * in_array($prop, $fields) через индекс [поле => true], общий для класса. Список полей
+     * экземпляра обычно тот же массив, что и у остальных экземпляров класса (сравнение
+     * идентичных массивов — проверка указателя). Индекс строится, только если все поля —
+     * нечисловые строки: для них isset() совпадает с нестрогим in_array().
+     */
+    private function isKnownField(string $prop, array $fields): bool
+    {
+        $entry = self::$jamFieldIndexCache[static::class] ?? null;
+        if ($entry === null || $entry[0] !== $fields) {
+            $index = [];
+            foreach ($fields as $field) {
+                if (!is_string($field) || is_numeric($field)) {
+                    $index = null;
+                    break;
+                }
+                $index[$field] = true;
+            }
+            $entry = self::$jamFieldIndexCache[static::class] = [$fields, $index];
+        }
+        if ($entry[1] === null || is_numeric($prop)) {
+            return in_array($prop, $fields);
+        }
+        return isset($entry[1][$prop]);
+    }
+
     private function throwIncorrectDynamicSetProp(string $prop, array $fields): never
     {
         $map = $this->getRelationClasses();
@@ -455,7 +489,7 @@ trait DynamicProps
         $service = $this->getService();
         if (
             !(empty($fields)
-            || in_array($prop, $fields)
+            || $this->isKnownField($prop, $fields)
             || in_array($prop, $service)
             || $this->isRelationProp($prop)
             || ($prop === static::PIVOT_FIELD)
@@ -821,7 +855,7 @@ trait DynamicProps
      */
     public function callChangeThisMethod($prop)
     {
-        if (method_exists($this, 'changeThis')) {
+        if (self::$jamHasChangeThis[static::class] ??= method_exists($this, 'changeThis')) {
             $this->changeThis($prop);
             return true;
         }
