@@ -56,7 +56,7 @@ for ($i = 0; $i < $repeat; $i++) {
 $profiler->stop();
 
 $log = $profiler->getLog();
-$total = count($log);
+$total = 0;
 // aggregateByFunction() считает inclusive по каждому кадру, и при рекурсии (вложенные модели)
 // одна функция попадает в сэмпл много раз. Считаем inclusive сами: не больше 1 на сэмпл.
 $inclusive = [];
@@ -64,13 +64,15 @@ foreach ($log->aggregateByFunction() as $fn => $info) {
     $self[$fn] = $info['self'];
 }
 foreach ($log as $entry) {
+    $weight = $entry->getEventCount();
+    $total += $weight;
     $seen = [];
     foreach ($entry->getTrace() as $frame) {
         $fn = isset($frame['class']) ? $frame['class'] . '::' . ($frame['function'] ?? '') : ($frame['closure_function'] ?? $frame['function'] ?? $frame['file'] ?? '?');
         $seen[$fn] = true;
     }
     foreach ($seen as $fn => $_) {
-        $inclusive[$fn] = ($inclusive[$fn] ?? 0) + 1;
+        $inclusive[$fn] = ($inclusive[$fn] ?? 0) + $weight;
     }
 }
 $print = function (string $title, array $counts) use ($total, $top) {
