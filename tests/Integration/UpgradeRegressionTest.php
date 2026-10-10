@@ -11,6 +11,7 @@ use Jam\Models\Tests\Fixtures\Models\Document;
 use Jam\Models\Tests\Fixtures\Models\Post;
 use Jam\Models\Tests\Fixtures\Models\SlugPage;
 use Jam\Models\Tests\Fixtures\Models\Tag;
+use Jam\Models\Tests\Fixtures\Models\TranslatedAttach;
 use Jam\Models\Tests\Fixtures\Models\ZeroIdAuthor;
 use Jam\Models\Tests\Support\ArrayStorage;
 use Jam\Models\Tests\Support\DatabaseTestCase;
@@ -74,6 +75,66 @@ final class UpgradeRegressionTest extends DatabaseTestCase
         $doc->body = 'Updated body';
         $doc->save();
         $this->assertSame('X', $doc->description);
+    }
+
+    public function testComputedExtraValueSurvivesAssigningIdFieldAndRelation(): void
+    {
+        $m = new TranslatedAttach(['description' => 'X']);
+        $this->assertSame('X', $m->description);
+
+        $m->id = 1;
+        $this->assertSame('X', $m->description);
+        $m->post_id = 2;
+        $this->assertSame('X', $m->description);
+        $m->tag = new Tag(['id' => 3, 'name' => 'php']);
+        $this->assertSame('X', $m->description);
+        $m->tag = ['id' => 4, 'name' => 'orm'];
+        $this->assertSame('X', $m->description);
+    }
+
+    public function testComputedExtraValueSurvivesLaterFieldsInConstructorAndFromArray(): void
+    {
+        $this->assertSame('X', (new TranslatedAttach(['description' => 'X', 'id' => 1, 'post_id' => 2]))->description);
+
+        $m = new TranslatedAttach();
+        $m->fromArray(['description' => 'Y', 'id' => 1, 'post_id' => 2]);
+        $this->assertSame('Y', $m->description);
+
+        // Повторный fromArray без description значение не теряет
+        $m->fromArray(['post_id' => 5]);
+        $this->assertSame('Y', $m->description);
+    }
+
+    public function testComputedExtraValueIsAvailableInCreatedHandler(): void
+    {
+        $m = new TranslatedAttach(['description' => 'X', 'post_id' => 2]);
+        $seen = [];
+        $m->on(Model::EVENT_CREATED, function ($id, array $row) use ($m, &$seen) {
+            // Как в приложении: хук проставляет id и сохраняет переводы
+            $m->id = $id;
+            $seen[] = [$id, $m->id, $m->description];
+            return $row;
+        });
+
+        $m->save();
+        $this->assertSame([[1, 1, 'X']], $seen);
+        $this->assertSame('X', $m->description);
+
+        $seen = [];
+        $m2 = new TranslatedAttach(['description' => 'Z', 'post_id' => 3]);
+        $m2->on(Model::EVENT_CREATED, function ($id, array $row) use ($m2, &$seen) {
+            $seen[] = $m2->description;
+            return $row;
+        });
+        $m2->insert();
+        $this->assertSame(['Z'], $seen);
+        $this->assertSame(2, $m2->id);
+        $this->assertSame('Z', $m2->description);
+    }
+
+    public function testComputedExtraFieldWithoutAssignedValueIsComputed(): void
+    {
+        $this->assertSame('', (new TranslatedAttach(['id' => 1]))->description);
     }
 
     public function testComputedValuesAreStillRecalculated(): void
