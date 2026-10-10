@@ -57,6 +57,11 @@ class ConvertableHelperFromArray
         // ee(get_class($this->model), $data);
         // Перебираем весь массив инициализации для свойства prop (которое в корне является $this модели)
         foreach ($data as $k => $v) {
+            // Ключ связи в данных означает, что связь загружена — даже если она пуста (null или [])
+            $isRelation = $isModel && $prop->isRelationProp($k);
+            if ($isRelation) {
+                $prop->markRelationLoaded($k);
+            }
             // Игнорируем null-значения
             if (is_null($v) || (empty($v) && is_scalar($v) && !empty($cast[$k]->is_null))) {
                 continue;
@@ -72,15 +77,12 @@ class ConvertableHelperFromArray
             if (
                 $isModel && is_scalar($v)
                 && (!isset($cast[$k]) || ($cast[$k]->type ?? null) !== CastClosure::TYPE_CLOSURE)
-                && !$prop->isRelationProp($k)
+                && !$isRelation
             ) {
                 $this->setKVPropNode($prop, $k, $v, $makeArray);
                 continue;
             }
             $convertableData = $this->getPropClassData($prop, $k, $v, $cast);
-            if ($convertableData->skipNode) {
-                continue;
-            }
             $node = $this->makeNode($convertableData);
             $this->setKVPropNode($prop, $k, $node, $makeArray);
         }
@@ -110,10 +112,8 @@ class ConvertableHelperFromArray
                 $R = $prop->getRelationByAlias($k);
                 if ($R->isTypeMany()) {
                     $convertableHelperData->className = ModelList::class;
+                    // Пустые данные дают пустой ModelList: связь загружена, но записей нет
                     $convertableHelperData->classArgs = [$R->getClass(), $v, $this->silence];
-                    if (empty((array)$v)) {
-                        $convertableHelperData->skipNode = true;
-                    }
                 } else {
                     $convertableHelperData->className = $R->getClass();
                     $convertableHelperData->classArgs = [$v, $this->silence];

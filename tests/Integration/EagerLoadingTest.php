@@ -56,7 +56,8 @@ final class EagerLoadingTest extends DatabaseTestCase
         $this->assertInstanceOf(ModelList::class, $users[0]->posts);
         $this->assertSame(['A1', 'A2'], $users[0]->posts->column('title'));
         $this->assertSame(['B1'], $users[1]->posts->column('title'));
-        $this->assertNull($users[2]->posts, 'no related rows — relation stays null');
+        $this->assertInstanceOf(ModelList::class, $users[2]->posts, 'no related rows — empty list, not null');
+        $this->assertTrue($users[2]->posts->isEmpty());
     }
 
     public function testHasOneAndBelongs(): void
@@ -88,7 +89,7 @@ final class EagerLoadingTest extends DatabaseTestCase
         $this->assertQueryCount(3); // posts, post_tag, tags
         $this->assertSame('SELECT * FROM post_tag WHERE `post_id` IN (1, 2, 3)', $this->queries()[1]);
         $this->assertSame(['php', 'orm'], $posts[0]->tags->column('name'));
-        $this->assertNull($posts[1]->tags);
+        $this->assertTrue($posts[1]->tags->isEmpty());
         $this->assertSame(['orm', 'sql'], $posts[2]->tags->column('name'));
     }
 
@@ -161,7 +162,7 @@ final class EagerLoadingTest extends DatabaseTestCase
         // l(N) ограничивает общий запрос по связи, а не количество записей у каждого родителя
         $users = User::instance()->with('posts:o(id):l(1)')->orderBy('id')->all();
         $this->assertSame(['A1'], $users[0]->posts->column('title'));
-        $this->assertNull($users[1]->posts);
+        $this->assertTrue($users[1]->posts->isEmpty());
     }
 
     public function testReturnEmptyMarker(): void
@@ -229,5 +230,65 @@ final class EagerLoadingTest extends DatabaseTestCase
         $this->assertCount(3, $builder->all());
         // with сохраняется на экземпляре-построителе между запросами
         $this->assertNotNull($builder->id(1)->first()->comments);
+    }
+
+    public function testLoadedButEmptyRelationsAreDistinguishableFromNotLoaded(): void
+    {
+        // Carol (3): ни профиля, ни постов
+        $carol = User::instance()->with('profile, posts.comments')->id(3)->first();
+        $this->assertQueryCount(3); // users, profiles, posts — comments не запрашиваются: постов нет
+
+        $this->assertInstanceOf(ModelList::class, $carol->posts);
+        $this->assertTrue($carol->posts->isEmpty());
+        $this->assertTrue($carol->isRelationLoaded('posts'));
+        $this->assertNull($carol->profile);
+        $this->assertTrue($carol->isRelationLoaded('profile'));
+
+        // Обращение к загруженной пустой связи не порождает запросов
+        $this->resetQueryLog();
+        foreach ($carol->posts as $post) {
+            $this->fail('no posts expected');
+        }
+        $this->assertQueryCount(0);
+
+        $notLoaded = User::instance()->id(3)->first();
+        $this->assertFalse($notLoaded->isRelationLoaded('posts'));
+        $this->assertFalse($notLoaded->isRelationLoaded('profile'));
+        $this->assertNull($notLoaded->posts);
+    }
+
+    public function testEmptyRelationsAreMarkedOnEveryRowAndNestedLevel(): void
+    {
+        $posts = Post::instance()->with('author, category, comments.author, tags')->orderBy('id')->all();
+
+        // A2 (2): без категории, комментариев и тегов
+        $this->assertTrue($posts[1]->isRelationLoaded('category'));
+        $this->assertNull($posts[1]->category);
+        $this->assertTrue($posts[1]->comments->isEmpty());
+        $this->assertTrue($posts[1]->tags->isEmpty());
+        $this->assertSame('Alice', $posts[1]->author->name);
+
+        // Вложенный уровень: belongs-связь комментария загружена у каждого комментария
+        foreach ($posts[0]->comments as $comment) {
+            $this->assertTrue($comment->isRelationLoaded('author'));
+        }
+        // Незапрошенная вложенная связь не помечается
+        $this->assertFalse($posts[0]->comments[0]->isRelationLoaded('post'));
+    }
+
+    public function testEmptyRelationsKeepToArrayFormat(): void
+    {
+        $arr = User::instance()->with('profile, posts')->id(3)->first()->toArray();
+        $this->assertArrayNotHasKey('posts', $arr);
+        $this->assertArrayNotHasKey('profile', $arr);
+
+        $arr = Post::instance()->with('category, comments, tags')->id(2)->first()->toArray();
+        $this->assertArrayNotHasKey('category', $arr);
+        $this->assertArrayNotHasKey('comments', $arr);
+        $this->assertArrayNotHasKey('tags', $arr);
+
+        // Непустые связи выводятся как раньше
+        $arr = User::instance()->with('posts')->id(2)->first()->toArray();
+        $this->assertSame(['B1'], array_column($arr['posts'], 'title'));
     }
 }

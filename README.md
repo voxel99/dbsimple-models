@@ -130,6 +130,11 @@ $activeUsers = User::instance()
 // Eager load relations (one query per relation, no N+1) and export with computed fields
 $users = User::instance()->with('posts(id, title):o(id DESC), profile')->all();
 $usersArray = $users->toArray(':cd');
+
+// A requested relation is always set, even with no related rows:
+// hasMany -> empty ModelList, hasOne/belongs -> null (empty lists are still omitted from toArray())
+$users[0]->posts->isEmpty();
+$users[0]->isRelationLoaded('profile'); // true: loaded (maybe null), no lazy re-query needed
 ```
 
 #### Creating & Updating
