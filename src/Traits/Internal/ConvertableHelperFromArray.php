@@ -107,7 +107,7 @@ class ConvertableHelperFromArray
                     $convertableHelperData->classArgs = [$v, $this->silence];
                 }
             } elseif (isset($cast[$k])) {
-                $closureClass = CastClosure::fromCast($cast[$k]);
+                $closureClass = CastClosure::sharedFromCast($cast[$k]);
                 $convertableHelperData->castToArray = is_array($v) && $closureClass && $closureClass->isCastToArray();
             }
         } elseif ($isModelList) {

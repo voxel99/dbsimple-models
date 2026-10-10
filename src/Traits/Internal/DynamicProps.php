@@ -152,7 +152,7 @@ trait DynamicProps
         } else { // Обработка на основе cast-данных
             $cast = $this->getCast();
             if (!empty($cast[$prop])) {
-                $closureClass = CastClosure::fromCast($cast[$prop]);
+                $closureClass = CastClosure::sharedFromCast($cast[$prop]);
                 if (!$closureClass) {
                     // Для внешнего представления делаем преобразование
                     if ($castEx) {
@@ -184,7 +184,7 @@ trait DynamicProps
         } else {
             $cast = $this->getCast();
             if (!empty($cast[$prop])) {
-                $closureClass = CastClosure::fromCast($cast[$prop]);
+                $closureClass = CastClosure::sharedFromCast($cast[$prop]);
                 if (!$closureClass) {
                     $layer = CastClosure::CAST_DB;
                 } else {

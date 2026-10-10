@@ -408,7 +408,7 @@ class ConvertableHelperToArray
             if (!isset($ret[$k]) || is_null($this->model->{$k})) {
                 continue;
             }
-            $closureClass = CastClosure::fromCast($cast[$k]);
+            $closureClass = CastClosure::sharedFromCast($cast[$k]);
             if ($closureClass) {
                 $ret[$k] = $closureClass->stringValue($this->model->{$k});
                 if ($this->getFlag(Model::FLAG_SKIP_NO)) {
