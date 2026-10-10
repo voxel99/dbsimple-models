@@ -458,7 +458,7 @@ class ConvertableHelperToArray
             if (!isset($ret[$k]) || is_null($this->model->{$k})) {
                 continue;
             }
-            $closureClass = CastClosure::sharedFromCast($cast[$k]);
+            $closureClass = CastClosure::sharedForField($modelObject::class, $k, $cast[$k]);
             if ($closureClass) {
                 $ret[$k] = $closureClass->stringValue($this->model->{$k});
                 if ($this->flagValues[Model::FLAG_SKIP_NO]) {

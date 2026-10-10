@@ -162,7 +162,7 @@ trait DynamicProps
         } else { // Обработка на основе cast-данных
             $cast = $this->getCast();
             if (!empty($cast[$prop])) {
-                $closureClass = CastClosure::sharedFromCast($cast[$prop]);
+                $closureClass = CastClosure::sharedForField(static::class, $prop, $cast[$prop]);
                 if (!$closureClass) {
                     // Для внешнего представления делаем преобразование
                     if ($castEx) {
@@ -480,7 +480,7 @@ trait DynamicProps
             } elseif (is_array($value) || is_object($value)) {
                 $dataLayer = CastClosure::CAST_EXTERNAL;
             } elseif (!empty($cast[$prop])) {
-                $closureClass = CastClosure::sharedFromCast($cast[$prop]);
+                $closureClass = CastClosure::sharedForField(static::class, $prop, $cast[$prop]);
                 if ($closureClass) {
                     $layerCheck = $closureClass->checkValue($value);
                     if ($layerCheck) {

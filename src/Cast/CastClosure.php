@@ -102,41 +102,37 @@ abstract class CastClosure
     }
 
     /**
-     * @var \WeakMap<object, array{0: mixed, 1: mixed, 2: mixed, 3: ?string, 4: ?CastClosure}>|null
+     * @var array<string, array<string, array{0: object, 1: ?string, 2: ?string, 3: ?CastClosure}>>
      */
-    private static ?\WeakMap $sharedByCast = null;
+    private static array $sharedByField = [];
 
     /**
-     * То же, что fromCast(), но для встроенных типов возвращает один экземпляр на описание каста
-     * (объекты описаний общие для всех экземпляров модели, см. DynamicProps::getCast()).
-     * Встроенные касты не меняют состояние после создания, поэтому экземпляр можно переиспользовать.
-     * Пользовательские касты (TYPE_CLOSURE) создаются заново на каждый вызов, как и в fromCast().
+     * То же, что fromCast($castObj), но для встроенных типов возвращает один экземпляр на поле класса
+     * модели: описания кастов общие для всех экземпляров класса (см. DynamicProps::getCast()),
+     * а встроенные касты не меняют состояние после создания. Пользовательские касты (TYPE_CLOSURE)
+     * создаются заново на каждый вызов, как и в fromCast().
+     *
+     * Запись кеша действительна, пока поле описывает тот же объект каста (описание строится
+     * из $types один раз на класс и считается неизменяемым) и класс типа в реестре
+     * $factoryClasses не поменялся. Память ограничена числом полей с кастами.
      *
      * @internal Для горячих путей пакета. Возвращённый объект нельзя изменять.
      * @param object $castObj {type, rule}
      * @return CastClosure|null
      * @throws Exception
      */
-    public static function sharedFromCast(object $castObj): ?CastClosure
+    public static function sharedForField(string $modelClass, string $field, object $castObj): ?CastClosure
     {
+        $entry = self::$sharedByField[$modelClass][$field] ?? null;
+        if ($entry !== null && $entry[0] === $castObj && (self::$factoryClasses[$entry[1]] ?? null) === $entry[2]) {
+            return $entry[3];
+        }
         $type = $castObj->type ?? null;
-        if (!is_string($type) || $type === self::TYPE_CLOSURE) {
-            return self::fromCast($castObj);
+        $closure = self::fromCast($castObj);
+        if (is_string($type) && $type !== self::TYPE_CLOSURE) {
+            self::$sharedByField[$modelClass][$field] = [$castObj, $type, self::$factoryClasses[$type] ?? null, $closure];
         }
-        $rule = $castObj->rule ?? null;
-        $keyTypes = $castObj->top_level_key_types ?? null;
-        $cls = self::$factoryClasses[$type] ?? null;
-        $cache = self::$sharedByCast ??= new \WeakMap();
-        $entry = $cache[$castObj] ?? null;
-        // Описание каста и реестр классов публично изменяемы — проверяем, что запись актуальна
-        if (
-            $entry === null || $entry[0] !== $type || $entry[1] !== $rule
-            || $entry[2] !== $keyTypes || $entry[3] !== $cls
-        ) {
-            $entry = [$type, $rule, $keyTypes, $cls, self::fromCast($castObj)];
-            $cache[$castObj] = $entry;
-        }
-        return $entry[4];
+        return $closure;
     }
 
     public static function castScalar($type, $value, $isNull = false)
