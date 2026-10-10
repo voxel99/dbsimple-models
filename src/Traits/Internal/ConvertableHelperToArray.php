@@ -58,6 +58,9 @@ class ConvertableHelperToArray
     /** @var array<class-string, bool> Модель не переопределяет ModelAbstract::getFlag() */
     private static array $plainGetFlag = [];
 
+    /** @var array<class-string, bool> Модель не переопределяет getRelationAliases() */
+    private static array $plainRelationAliases = [];
+
     /** @var array<string, mixed> Значения флагов FLAG_LETTERS: буква => getFlag($this->flags, буква) */
     private array $flagValues = [];
 
@@ -152,6 +155,22 @@ class ConvertableHelperToArray
         $this->fields = $fields;
     }
 
+    /**
+     * getRelationAliases() модели. Если модель его не переопределяет, это ключи отношений,
+     * уже полученных в конструкторе через getAllRelations(), — без повторного array_merge.
+     * @return array<int, string>
+     */
+    private function relationAliases(): array
+    {
+        if ($this->modelRelationAliases === null) {
+            $class = $this->model::class;
+            $plain = self::$plainRelationAliases[$class]
+                ??= (new \ReflectionMethod($this->model, 'getRelationAliases'))->getDeclaringClass()->getName() === Model::class;
+            $this->modelRelationAliases = $plain ? array_keys($this->relations) : $this->model->getRelationAliases();
+        }
+        return $this->modelRelationAliases;
+    }
+
     private function getFlagFields($flagValue)
     {
         $flagFields = $flagValue;
@@ -197,16 +216,33 @@ class ConvertableHelperToArray
 
     private function getTraceFields()
     {
-        $traceFields = array_unique(array_merge(
+        $lists = [
             array_keys($this->model->getDataDB()),
             array_keys($this->model->getDataEX()),
-            $this->model->getRelationAliases(),
-            $this->model->getComputed(),
-            $this->model->getHidden(),
-            $this->model->getExtra(),
-            $this->model->getUpdatable(),
-            $this->explicit
-        ));
+            $this->relationAliases(),
+            $this->modelComputed,
+            $this->modelHidden,
+            $this->modelExtra,
+            $this->modelUpdatable,
+            $this->explicit,
+        ];
+        // array_unique() сортирует строки (O(n log n)) на каждую модель; здесь — один проход
+        // с тем же результатом: первые вхождения в исходном порядке, сравнение как у SORT_STRING
+        // (для ключей int|string совпадает с равенством ключей массива).
+        $traceFields = [];
+        $seen = [];
+        foreach ($lists as $list) {
+            foreach ($list as $item) {
+                if (!is_string($item) && !is_int($item)) {
+                    $traceFields = array_unique(array_merge(...$lists));
+                    break 2;
+                }
+                if (!isset($seen[$item])) {
+                    $seen[$item] = true;
+                    $traceFields[] = $item;
+                }
+            }
+        }
 
         if ($this->exclude) {
             $traceFields = array_diff($traceFields, (array)$this->exclude);
@@ -382,8 +418,7 @@ class ConvertableHelperToArray
         $failExtra =  !$this->flagValues[Model::FLAG_EXTRA] && in_array($field, $this->modelExtra);
 
         if (!$this->flagValues[Model::FLAG_DEPENDENCIES]) {
-            $this->modelRelationAliases ??= $this->model->getRelationAliases();
-            if (in_array($field, $this->modelRelationAliases)) {
+            if (in_array($field, $this->relationAliases())) {
                 return;
             }
         }
