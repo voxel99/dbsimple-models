@@ -53,6 +53,13 @@ updating.
   `0` without a query and without `deleting`/`deleted` events (previously it ran
   `DELETE ... WHERE id = NULL`; on main after 1dc70de it threw a `TypeError`).
   To delete by condition use `deleteWhere(...)` or `->where(...)->collection()->delete()`.
+- All flags of one `with()` node are honoured. In 1dc70de they were deduplicated
+  with a loose `array_unique()`, so a flag whose value was `==` to an earlier one
+  was silently dropped: `rel:c:p(weight)` and `rel:d:p` lost `p` (no `@pivot` in
+  `toArray()`), `rel:p(a|b):c` lost `c`, `rel:p:o(id)` lost `o`. After upgrading,
+  such expressions take effect, e.g. `@pivot` appears where `:p` was written but
+  never worked. Check `with()` expressions that combine `p` with other flags and
+  remove the flags you do not need.
 
 ### Fixed
 
@@ -65,6 +72,17 @@ updating.
   assignment (`$model->rel = ...`, including `null`) and survives `clone` and
   `serialize()`/`unserialize()` (nested models included). `toArray()` output is
   unchanged.
+- An empty value of a hasOne/belongs relation (`[]` or an empty object) means
+  "no related model" on every path: `new M(['rel' => []])`,
+  `new M(['rel' => (object) []])`, `new M((object) ['rel' => (object) []])`,
+  `$m->rel = []`, `$m->rel = (object) []` all leave `$m->rel === null` (the
+  relation is still marked loaded). Previously some of these paths produced an
+  empty related model. Non-empty values and hasMany are unchanged
+  (`$m->rel = []` on a hasMany gives an empty `ModelList`).
+- `toArray()` outputs an explicitly assigned empty hasMany
+  (`$m->rel = []`, `$m->rel = new ModelList(X::class)`) as `"rel": []`, as in
+  1dc70de (on main after 1dc70de the key was dropped). Relations that were not
+  loaded and empty `with()` results are still omitted.
 - A field declared in both `$computed` and `$extra` (an assigned value takes
   priority over the computed one) lost its assigned value on any later
   assignment, `save()` or `EVENT_CREATED` handler. Only values actually computed

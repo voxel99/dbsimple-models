@@ -401,10 +401,9 @@ class ConvertableHelperToArray
                 $value = $this->getValueByRelation($R);
                 $isWriteValue = true;
             } elseif (($value instanceof Model) || ($value instanceof ModelList)) {
-                // Пустой список связи (with() не нашёл записей) не выводим, как и незагруженную связь;
-                // [] — только по маркеру ret_empty (alias!)
-                $isWriteValue = $this->checkFlagField($withDependences, $field)
-                    && !(isset($this->relations[$field]) && $this->isEmptyRelationValue($value));
+                // Пустой результат with() и незагруженная связь сюда не попадают: свойство у них null.
+                // Явно присвоенный пустой список выводится как [] (как в 1dc70de)
+                $isWriteValue = $this->checkFlagField($withDependences, $field);
             } elseif ($isExplicit || ($withComputable && in_array($field, $computed))) {
                 if (!in_array($field, $updatable) || !isset($value)) {
                     try {
