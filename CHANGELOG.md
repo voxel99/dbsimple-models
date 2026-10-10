@@ -65,6 +65,17 @@ updating.
   assignment (`$model->rel = ...`, including `null`) and survives `clone` and
   `serialize()`/`unserialize()` (nested models included). `toArray()` output is
   unchanged.
+- An empty value of a hasOne/belongs relation (`[]` or an empty object) means
+  "no related model" on every path: `new M(['rel' => []])`,
+  `new M(['rel' => (object) []])`, `new M((object) ['rel' => (object) []])`,
+  `$m->rel = []`, `$m->rel = (object) []` all leave `$m->rel === null` (the
+  relation is still marked loaded). Previously some of these paths produced an
+  empty related model. Non-empty values and hasMany are unchanged
+  (`$m->rel = []` on a hasMany gives an empty `ModelList`).
+- `toArray()` outputs an explicitly assigned empty hasMany
+  (`$m->rel = []`, `$m->rel = new ModelList(X::class)`) as `"rel": []`, as in
+  1dc70de (on main after 1dc70de the key was dropped). Relations that were not
+  loaded and empty `with()` results are still omitted.
 - A field declared in both `$computed` and `$extra` (an assigned value takes
   priority over the computed one) lost its assigned value on any later
   assignment, `save()` or `EVENT_CREATED` handler. Only values actually computed

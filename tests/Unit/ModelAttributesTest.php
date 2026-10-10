@@ -6,6 +6,7 @@ namespace Jam\Models\Tests\Unit;
 
 use Jam\Models\Model;
 use Jam\Models\ModelException;
+use Jam\Models\ModelList;
 use Jam\Models\Tests\Fixtures\Models\Post;
 use Jam\Models\Tests\Fixtures\Models\Tag;
 use Jam\Models\Tests\Fixtures\Models\User;
@@ -134,6 +135,59 @@ final class ModelAttributesTest extends ModelTestCase
         $clone = clone $user;
         $this->assertTrue($clone->isRelationLoaded('profile'));
         $this->assertFalse($clone->isRelationLoaded('posts'));
+    }
+
+    /**
+     * Пустое значение одиночной связи на любом пути гидрации/присваивания
+     * @return array<string, array{\Closure(string, mixed): Model}>
+     */
+    public static function singleRelationPaths(): array
+    {
+        return [
+            'constructor array' => [static fn (string $class, string $alias, $empty) => new $class(['id' => 1, $alias => $empty])],
+            'constructor object' => [static fn (string $class, string $alias, $empty) => new $class((object) ['id' => 1, $alias => $empty])],
+            'assignment' => [static function (string $class, string $alias, $empty) {
+                $model = new $class(['id' => 1]);
+                $model->$alias = $empty;
+                return $model;
+            }],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('singleRelationPaths')]
+    public function testEmptySingleRelationValueMeansNoRelation(\Closure $make): void
+    {
+        // hasOne (User.profile) и belongs (Post.author); [] и пустой объект
+        foreach ([[User::class, 'profile'], [Post::class, 'author']] as [$class, $alias]) {
+            foreach (['[]' => [], '{}' => new \stdClass()] as $label => $empty) {
+                $model = $make($class, $alias, $empty);
+                $this->assertNull($model->$alias, "$class::$alias = $label");
+                $this->assertFalse(isset($model->$alias), "$class::$alias = $label");
+                $this->assertTrue($model->isRelationLoaded($alias), "$class::$alias = $label");
+                $this->assertArrayNotHasKey($alias, $model->toArray(), "$class::$alias = $label");
+            }
+        }
+
+        // Непустое значение — модель связанного класса
+        $user = $make(User::class, 'profile', ['bio' => 'hi']);
+        $this->assertInstanceOf(\Jam\Models\Tests\Fixtures\Models\Profile::class, $user->profile);
+        $this->assertSame('hi', $user->profile->bio);
+        $this->assertTrue($user->isRelationLoaded('profile'));
+        $user = $make(User::class, 'profile', (object) ['bio' => 'hi']);
+        $this->assertSame('hi', $user->profile->bio);
+    }
+
+    public function testAssignedEmptyHasManyIsEmptyModelList(): void
+    {
+        foreach (['[]' => [], 'ModelList' => new ModelList(Post::class)] as $label => $empty) {
+            $user = new User(['id' => 1]);
+            $user->posts = $empty;
+            $this->assertInstanceOf(ModelList::class, $user->posts, $label);
+            $this->assertTrue($user->posts->isEmpty(), $label);
+            $this->assertTrue($user->isRelationLoaded('posts'), $label);
+            // Явно присвоенный пустой список выводится как []
+            $this->assertSame(['id' => 1, 'posts' => []], $user->toArray(), $label);
+        }
     }
 
     public function testGuardedFieldCannotBeAssignedButCanBeHydrated(): void

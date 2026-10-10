@@ -62,8 +62,9 @@ class ConvertableHelperFromArray
             if ($isRelation) {
                 $prop->markRelationLoaded($k);
                 // Пустая связь в свойство не попадает: $model->rel остаётся null, чтобы
-                // empty()/isset()/if ($model->rel) работали как раньше; факт загрузки — в isRelationLoaded()
-                if ($v === []) {
+                // empty()/isset()/if ($model->rel) работали как раньше; факт загрузки — в isRelationLoaded().
+                // Для hasOne/belongs пустой объект — тоже «связи нет»
+                if ($v === [] || ($v instanceof \stdClass && !(array) $v && !$prop->getRelationByAlias($k)?->isTypeMany())) {
                     continue;
                 }
             }

@@ -543,6 +543,10 @@ trait DynamicProps
         if (!empty($this->hasMany[$prop])) {
             return new ModelList($className, $value);
         }
+        // Пустое значение одиночной связи ([] или пустой объект) — связи нет, как при гидрации
+        if ($prop !== static::PIVOT_FIELD && !(array) $value) {
+            return null;
+        }
 
         return new $className($value);
     }
