@@ -44,6 +44,37 @@ class ConvertableHelperToArray
 
     protected bool $debug = false;
 
+    /**
+     * Буквы флагов, которые читаются при конвертации. Их значения вычисляются один раз
+     * на вызов toArray() (см. setFlags()), а не на каждое поле модели.
+     */
+    private const array FLAG_LETTERS = [
+        Model::FLAG_DEPENDENCIES, Model::FLAG_EMPTY, Model::FLAG_HIDDEN, Model::FLAG_COMPUTABLE,
+        Model::FLAG_STRINGABLE, Model::FLAG_INTERNAL_DATABASE, Model::FLAG_EXTRA, Model::FLAG_PIVOT,
+        Model::FLAG_UPDATABLE, Model::FLAG_SCALAR, Model::FLAG_SKIP_NO, Model::FLAG_TITLES,
+        Model::FLAG_IDENTIFIERS,
+    ];
+
+    /** @var array<class-string, bool> Модель не переопределяет ModelAbstract::getFlag() */
+    private static array $plainGetFlag = [];
+
+    /** @var array<string, mixed> Значения флагов FLAG_LETTERS: буква => getFlag($this->flags, буква) */
+    private array $flagValues = [];
+
+    /** @var array<string, bool>|null Булевы флаги для связанных моделей (см. getDerivedBooleanFlags()) */
+    private ?array $derivedBooleanFlags = null;
+
+    /**
+     * Списки описаний модели. Зависят от класса модели, а не от значений полей, поэтому
+     * читаются один раз на вызов toArray(), а не на каждое поле.
+     * @var array<int, string>
+     */
+    private array $modelComputed;
+    private array $modelHidden;
+    private array $modelExtra;
+    private array $modelUpdatable;
+    private ?array $modelRelationAliases = null;
+
     public function __construct(
         Model $model,
         $flags = null,
@@ -59,6 +90,10 @@ class ConvertableHelperToArray
         $this->exclude = $exclude;
         $this->cutFields = $cutFields;
         $this->relations = $model->getAllRelations();
+        $this->modelComputed = $model->getComputed();
+        $this->modelHidden = $model->getHidden();
+        $this->modelExtra = $model->getExtra();
+        $this->modelUpdatable = $model->getUpdatable();
         $explicit = $model->getExplicit();
         foreach ($this->with as $alias => $R) {
             if (in_array($alias, $explicit)) {
@@ -82,6 +117,14 @@ class ConvertableHelperToArray
             $flags = $modelObject->parseFlags($flags);
         }
         $this->flags = $flags;
+        $this->derivedBooleanFlags = null;
+
+        $plain = self::$plainGetFlag[$modelObject::class]
+            ??= (new \ReflectionMethod($modelObject, 'getFlag'))->getDeclaringClass()->getName() === ModelAbstract::class;
+        $this->flagValues = [];
+        foreach (self::FLAG_LETTERS as $letter) {
+            $this->flagValues[$letter] = $plain ? ($flags[$letter] ?? false) : $modelObject->getFlag($flags, $letter);
+        }
     }
 
     /**
@@ -120,7 +163,9 @@ class ConvertableHelperToArray
 
     private function getFlag($flagName)
     {
-        return $this->model->getFlag($this->flags, $flagName);
+        return array_key_exists($flagName, $this->flagValues)
+            ? $this->flagValues[$flagName]
+            : $this->model->getFlag($this->flags, $flagName);
     }
 
     private function checkFlagField($flagValue, $field)
@@ -262,23 +307,24 @@ class ConvertableHelperToArray
 
     private function getValue($traceField, $field, &$isWriteValue)
     {
-        $withExtra = $this->getFlag(Model::FLAG_EXTRA); // x
-        $withHidden = $this->getFlag(Model::FLAG_HIDDEN); // h
-        $withUpdatable = $this->getFlag(Model::FLAG_UPDATABLE); // u
-        $withComputable = $this->getFlag(Model::FLAG_COMPUTABLE); // c
-        $withDependences = $this->getFlag(Model::FLAG_DEPENDENCIES); // d
-        $isExplicit = in_array($field, $this->explicit);
+        $withExtra = $this->flagValues[Model::FLAG_EXTRA]; // x
+        $withHidden = $this->flagValues[Model::FLAG_HIDDEN]; // h
+        $withUpdatable = $this->flagValues[Model::FLAG_UPDATABLE]; // u
+        $withComputable = $this->flagValues[Model::FLAG_COMPUTABLE]; // c
+        $withDependences = $this->flagValues[Model::FLAG_DEPENDENCIES]; // d
+        $withEmpty = $this->flagValues[Model::FLAG_EMPTY]; // e
+        $isExplicit = $this->explicit && in_array($field, $this->explicit);
 
         $value = isset($this->model->{$traceField}) ? $this->model->{$traceField} : null;
 
-        $R = $this->getRelationByNulledValue($field, $value);
+        $R = is_null($value) ? $this->getRelationByNulledValue($field, $value) : null;
         if ($R) {
             $value = $this->getValueByRelation($R);
             $isWriteValue = true;
         } elseif (($value instanceof Model) || ($value instanceof ModelList)) {
             $isWriteValue = $this->checkFlagField($withDependences, $field);
-        } elseif ($isExplicit || ($withComputable && in_array($field, $this->model->getComputed()))) {
-            if (!in_array($field, $this->model->getUpdatable()) || !isset($value)) {
+        } elseif ($isExplicit || ($withComputable && in_array($field, $this->modelComputed))) {
+            if (!in_array($field, $this->modelUpdatable) || !isset($value)) {
                 try {
                     $value = $this->model->$field();
                 } catch (\Throwable $e) {
@@ -287,21 +333,21 @@ class ConvertableHelperToArray
                 }
             }
             $isWriteValue = !is_null($value) && ($isExplicit || $this->checkFlagField($withComputable, $field));
-        } elseif ($withUpdatable && in_array($field, $this->model->getUpdatable())) {
+        } elseif ($withUpdatable && in_array($field, $this->modelUpdatable)) {
             $value = $this->model->$field();
             $isWriteValue = $this->checkFlagField($withUpdatable, $field);
-        } elseif (in_array($field, $this->model->getHidden())) {
+        } elseif (in_array($field, $this->modelHidden)) {
             $isWriteValue = !is_null($value) && $this->checkHidden($field, $withHidden);
-        } elseif (in_array($field, $this->model->getExtra())) {
+        } elseif (in_array($field, $this->modelExtra)) {
             // extra поля показываем, если задан флаг
             if ($withExtra) {
                 $isWriteValue = $this->checkFlagField($withExtra, $field);
             }
-        } elseif (!is_null($value) || ($this->getFlag(Model::FLAG_EMPTY) && $this->model->isField($field))) {
+        } elseif (!is_null($value) || ($withEmpty && $this->model->isField($field))) {
             // Флаг e: null-значения обычных полей тоже попадают в результат
             $isWriteValue = true;
         }
-        if (is_null($value) && (!$this->getFlag(Model::FLAG_EMPTY) || in_array($field, $this->model->getExtra()))) {
+        if (is_null($value) && (!$withEmpty || in_array($field, $this->modelExtra))) {
             $isWriteValue = false;
         }
         return $value;
@@ -315,10 +361,11 @@ class ConvertableHelperToArray
         $withRelated = $withField['with'] ?? null;
         $excludeRelated = $withField['exclude'] ?? null;
 
+        $this->derivedBooleanFlags ??= $this->getDerivedBooleanFlags($this->flags);
         if (!$flagsRelated) {
-            $flagsRelated = $this->getDerivedBooleanFlags($this->flags);
+            $flagsRelated = $this->derivedBooleanFlags;
         } else {
-            $flagsRelated = array_merge($flagsRelated, $this->getDerivedBooleanFlags($this->flags));
+            $flagsRelated = array_merge($flagsRelated, $this->derivedBooleanFlags);
         }
 
         if (
@@ -335,14 +382,17 @@ class ConvertableHelperToArray
 
     private function processTraceField($traceField, &$ret)
     {
-        $field = $this->getFieldNormalizeName($traceField);
-        $isUpdatable = $this->getFlag(Model::FLAG_UPDATABLE) && in_array($field, $this->model->getUpdatable());
-        $failComputed = !$this->getFlag(Model::FLAG_COMPUTABLE) && in_array($field, $this->model->getComputed());
-        $failHidden = !$this->getFlag(Model::FLAG_HIDDEN) && in_array($field, $this->model->getHidden());
-        $failExtra =  !$this->getFlag(Model::FLAG_EXTRA) && in_array($field, $this->model->getExtra());
+        $field = strpos($traceField, ":") ? $this->getFieldNormalizeName($traceField) : $traceField;
+        $isUpdatable = $this->flagValues[Model::FLAG_UPDATABLE] && in_array($field, $this->modelUpdatable);
+        $failComputed = !$this->flagValues[Model::FLAG_COMPUTABLE] && in_array($field, $this->modelComputed);
+        $failHidden = !$this->flagValues[Model::FLAG_HIDDEN] && in_array($field, $this->modelHidden);
+        $failExtra =  !$this->flagValues[Model::FLAG_EXTRA] && in_array($field, $this->modelExtra);
 
-        if (!$this->getFlag(Model::FLAG_DEPENDENCIES) && in_array($field, $this->model->getRelationAliases())) {
-            return;
+        if (!$this->flagValues[Model::FLAG_DEPENDENCIES]) {
+            $this->modelRelationAliases ??= $this->model->getRelationAliases();
+            if (in_array($field, $this->modelRelationAliases)) {
+                return;
+            }
         }
         if (!$isUpdatable && ($failComputed || $failHidden || $failExtra)) {
             return;
@@ -411,7 +461,7 @@ class ConvertableHelperToArray
             $closureClass = CastClosure::sharedFromCast($cast[$k]);
             if ($closureClass) {
                 $ret[$k] = $closureClass->stringValue($this->model->{$k});
-                if ($this->getFlag(Model::FLAG_SKIP_NO)) {
+                if ($this->flagValues[Model::FLAG_SKIP_NO]) {
                     $this->processSkipNo($ret, $k);
                 }
             }
