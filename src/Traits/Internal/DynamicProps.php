@@ -82,6 +82,10 @@ trait DynamicProps
      * @var array<class-string, array<string, object>>
      */
     private static array $jamCastClassCache = [];
+    /**
+     * @var array<class-string, array<string, array<int, string>>>
+     */
+    private static array $jamJsonTopLevelKeyRulesCache = [];
 
     /**
      * Динамические данные модели для сохранения в БД
@@ -306,12 +310,13 @@ trait DynamicProps
         return in_array($prop, $this->getService()) && $prop !== static::SKIP_UPDATE;
     }
 
-    private function validateDynamicSetProp(string $prop, array $fields, array $map): void
+    private function validateDynamicSetProp(string $prop, array $fields): void
     {
         if ($this->canAssignToKnownModelProp($prop, $fields)) {
             return;
         }
 
+        $map = $this->getRelationClasses();
         $extra = $this->getExtra();
         throw new ModelException("[" . $prop . "] is not a correct field of class " . get_class($this)
             . ". Fill your \$field property: " . implode(", ", $fields)
@@ -330,12 +335,8 @@ trait DynamicProps
 
     private function jsonFieldForTopLevelKey(string $prop): ?string
     {
-        foreach ($this->getCast() as $field => $cast) {
-            if (($cast->type ?? null) !== CastClosure::TYPE_JSON || empty($cast->top_level_keys)) {
-                continue;
-            }
-
-            foreach ($cast->top_level_keys as $rule) {
+        foreach ($this->jsonTopLevelKeyRules() as $field => $rules) {
+            foreach ($rules as $rule) {
                 if ($this->jsonTopLevelKeyMatches($prop, $rule)) {
                     return $field;
                 }
@@ -343,6 +344,37 @@ trait DynamicProps
         }
 
         return null;
+    }
+
+    /**
+     * JSON-поля с перечнем ключей 1 уровня: [поле => правила]. Зависит только от описания
+     * кастов, а оно общее для класса (см. getCast()), поэтому разбирается один раз на класс,
+     * а не перебором всех кастов на каждое присваивание.
+     *
+     * @return array<string, array<int, string>>
+     */
+    private function jsonTopLevelKeyRules(): array
+    {
+        $cast = $this->getCast();
+        if (!$cast) {
+            return [];
+        }
+        $className = get_class($this);
+        // Кеш действителен, пока экземпляр работает с тем же описанием кастов, что и класс
+        if (isset(self::$jamJsonTopLevelKeyRulesCache[$className]) && $cast === (self::$jamCastClassCache[$className] ?? null)) {
+            return self::$jamJsonTopLevelKeyRulesCache[$className];
+        }
+        $rules = [];
+        foreach ($cast as $field => $castItem) {
+            if (($castItem->type ?? null) !== CastClosure::TYPE_JSON || empty($castItem->top_level_keys)) {
+                continue;
+            }
+            $rules[$field] = $castItem->top_level_keys;
+        }
+        if ($cast === (self::$jamCastClassCache[$className] ?? null)) {
+            self::$jamJsonTopLevelKeyRulesCache[$className] = $rules;
+        }
+        return $rules;
     }
 
     private function storeJsonTopLevelKeyValue(string $jsonField, string $prop, $value): void
@@ -398,13 +430,26 @@ trait DynamicProps
         return $changeMethod ? call_user_func($changeMethod) : $value;
     }
 
-    private function normalizeRelationAssignedValue(string $prop, $value, array $map)
+    /**
+     * Массив/объект, присвоенный свойству-отношению (или @pivot), разворачивается в модель.
+     * Класс определяется так же, как в getRelationClasses(), но без построения замыканий
+     * по всем отношениям на каждое присваивание.
+     */
+    private function normalizeRelationAssignedValue(string $prop, $value)
     {
-        if (!isset($map[$prop]) || (!(($value instanceof stdClass) || is_array($value)))) {
+        if (!(($value instanceof stdClass) || is_array($value))) {
             return $value;
         }
 
-        $className = $map[$prop]($this);
+        if ($prop === static::PIVOT_FIELD && $this->getPivotClass()) {
+            $className = $this->getPivotClass();
+        } else {
+            $R = $this->getRelationByAlias($prop);
+            if (!$R) {
+                return $value;
+            }
+            $className = $R->getClass($this);
+        }
         if (!$className) {
             // Polymorphic relations may legitimately have no target class for some types,
             // for example PostAttach(upload_type=text|toc). In that case drop raw payload.
@@ -434,7 +479,6 @@ trait DynamicProps
     {
         [$prop, $dataLayer] = $this->splitDynamicProp($prop);
         $fields = $this->getFields();
-        $map = $this->getRelationClasses();
 
         if ($this->storeExplicitOrExtraValue($prop, $value, $this->getExplicit())) {
             return;
@@ -459,7 +503,7 @@ trait DynamicProps
             return;
         }
 
-        $this->validateDynamicSetProp($prop, $fields, $map);
+        $this->validateDynamicSetProp($prop, $fields);
         if ($this->shouldSkipServiceFieldAssignment($prop)) {
             return;
         }
@@ -468,7 +512,7 @@ trait DynamicProps
 
         $dataLayer = $this->resolveDynamicSetLayer($prop, $value, $dataLayer);
         $value = $this->applyDynamicChangeMethod($prop, $value, $dataLayer);
-        $value = $this->normalizeRelationAssignedValue($prop, $value, $map);
+        $value = $this->normalizeRelationAssignedValue($prop, $value);
         $this->storeDynamicAssignedValue($prop, $value, $dataLayer);
         $this->forgetComputedValues();
         $this->callChangeThisMethod($prop);
@@ -482,11 +526,19 @@ trait DynamicProps
     private function forgetComputedValues(): void
     {
         $computed = $this->getComputed();
-        if (!$computed) {
+        if (!$computed || !$this->jamDataEx) {
             return;
         }
-        foreach (array_diff($computed, $this->getUpdatable(), $this->getExplicit()) as $prop) {
-            unset($this->jamDataEx[$prop]);
+        // То же, что unset по array_diff($computed, updatable, explicit), но без построения
+        // разности на каждое присваивание: обычно в jamDataEx нет закэшированных computed.
+        foreach ($computed as $prop) {
+            if (
+                array_key_exists($prop, $this->jamDataEx)
+                && !in_array($prop, $this->getUpdatable())
+                && !in_array($prop, $this->getExplicit())
+            ) {
+                unset($this->jamDataEx[$prop]);
+            }
         }
     }
 

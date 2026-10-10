@@ -133,7 +133,22 @@ trait Relatable
     public function getRelationByAlias($prop): ?Relation
     {
         // Связи хранятся по ключу-алиасу
-        return is_string($prop) ? ($this->getAllRelations()[$prop] ?? null) : null;
+        if (!is_string($prop)) {
+            return null;
+        }
+        // Поиск без array_merge всех отношений на каждый вызов (горячий путь __set/fromArray).
+        // Порядок как у getAllRelations(): при совпадении алиасов побеждает последний массив.
+        // Целочисленные ключи array_merge перенумеровывает — для них прежний путь.
+        if ((string)(int)$prop === $prop) {
+            return $this->getAllRelations()[$prop] ?? null;
+        }
+        if (array_key_exists($prop, $this->belongs)) {
+            return $this->belongs[$prop] ?? null;
+        }
+        if (array_key_exists($prop, $this->hasOne)) {
+            return $this->hasOne[$prop] ?? null;
+        }
+        return $this->hasMany[$prop] ?? null;
     }
 
     public function getRelationByClass($className, $row = null)
