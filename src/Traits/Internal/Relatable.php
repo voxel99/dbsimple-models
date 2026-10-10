@@ -328,6 +328,11 @@ trait Relatable
                 $localKey = $R->localKey();
                 $otherKey = $R->otherKey();
                 $pivot = $R->getPivot();
+                // Ключ модели пуст (например, INSERT IGNORE ничего не вставил) — пустой
+                // внешний ключ связанным моделям и pivot-строкам не проставляем
+                if (static::isEmptyInsertId($this->$localKey)) {
+                    continue;
+                }
                 if ($pivot) {
                     $pivotLocalKey = $R->pivotLocalKey(); // post_id
                     $pivotOtherKey = $R->pivotOtherKey(); // tag_id

@@ -364,7 +364,11 @@ class Model extends ModelAbstract implements IRelationList
             }
             $id = $this->$alias->save($relationParams);
             if ($R->isTypeBelongs()) {
-                if ($this->{$R->localKey()} !== $id) {
+                // Связанная запись не вставлена (пустой insert id) — внешний ключ не трогаем
+                if (static::isEmptyInsertId($id)) {
+                    $id = $this->$alias->{$R->otherKey()};
+                }
+                if (!static::isEmptyInsertId($id) && $this->{$R->localKey()} !== $id) {
                     $this->{$R->localKey()} = $id;
                     if (!empty($this->{$this->pk()})) {
                         $this->update($R->localKey());
@@ -502,7 +506,7 @@ class Model extends ModelAbstract implements IRelationList
             $options[self::SAVE_USE_INSERT_IGNORE] => $this->insertI(),
             default => $this->insert(),
         };
-        if (!$id) {
+        if (!$id && !static::isEmptyInsertId($newId)) {
             $this->{$this->pk()} = $newId;
         }
         return $newId;

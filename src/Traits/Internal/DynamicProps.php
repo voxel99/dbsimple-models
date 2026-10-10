@@ -131,6 +131,15 @@ trait DynamicProps
      */
     protected array $jamDataEx = [];
 
+    /**
+     * Какие значения в $jamDataEx — кэш вычислимых полей (результат вызова метода-вычислителя),
+     * а не присвоенные значения: [поле => true]. Только они сбрасываются после изменения
+     * данных модели (см. forgetComputedValues()); присвоенные значения (в т.ч. полей,
+     * объявленных одновременно в computed и extra) сохраняются.
+     * @var array<string, true>
+     */
+    private array $jamComputedCached = [];
+
     public function getDataDB(): array
     {
         return $this->jamDataDb;
@@ -223,6 +232,7 @@ trait DynamicProps
         }
         unset($this->jamDataDb[$prop]);
         unset($this->jamDataEx[$prop]);
+        unset($this->jamComputedCached[$prop]);
         $this->forgetRelationLoaded($prop);
     }
 
@@ -277,6 +287,9 @@ trait DynamicProps
                 $this->jamDataEx[$prop] = $this->castDbToExternal($prop, $this->jamDataDb[$prop]);
             } else {
                 $this->jamDataEx[$prop] = $this->{$prop}();
+                if (in_array($prop, $this->getComputed()) && !in_array($prop, $updatable) && !in_array($prop, $this->getExplicit())) {
+                    $this->jamComputedCached[$prop] = true;
+                }
             }
         }
 
@@ -536,6 +549,7 @@ trait DynamicProps
 
     private function storeDynamicAssignedValue(string $prop, $value, $dataLayer): void
     {
+        unset($this->jamComputedCached[$prop]);
         if ($dataLayer === CastClosure::CAST_EXTERNAL) {
             $this->jamDataEx[$prop] = $value;
             unset($this->jamDataDb[$prop]);
@@ -564,12 +578,14 @@ trait DynamicProps
         $explicit = $plain ? ($this->jamExplicit ?: $this->getExplicit()) : $this->getExplicit();
         if ($explicit && in_array($prop, $explicit)) {
             $this->jamDataEx[$prop] = $value;
+            unset($this->jamComputedCached[$prop]);
             return;
         }
 
         $extra = $plain ? ($this->jamExtra ?: $this->getExtra()) : $this->getExtra();
         if ($extra && in_array($prop, $extra)) {
             $this->jamDataEx[$prop] = $value;
+            unset($this->jamComputedCached[$prop]);
             return;
         }
 
@@ -644,6 +660,9 @@ trait DynamicProps
             $value = $this->normalizeRelationAssignedValue($prop, $value);
         }
 
+        if ($this->jamComputedCached) {
+            unset($this->jamComputedCached[$prop]);
+        }
         if ($dataLayer === CastClosure::CAST_EXTERNAL) {
             $this->jamDataEx[$prop] = $value;
             unset($this->jamDataDb[$prop]);
@@ -651,7 +670,7 @@ trait DynamicProps
             $this->jamDataDb[$prop] = $value;
             unset($this->jamDataEx[$prop]);
         }
-        if ($this->jamDataEx) {
+        if ($this->jamComputedCached) {
             $this->forgetComputedValues();
         }
         $this->callChangeThisMethod($prop);
@@ -660,25 +679,16 @@ trait DynamicProps
     /**
      * Сбрасывает закэшированные значения вычислимых полей: после изменения данных модели
      * $model->computed_prop должен пересчитываться, а не возвращать устаревшее значение.
-     * Updatable- и explicit-поля не трогаем — их значения могут быть присвоены явно.
+     * Сбрасывается только то, что было вычислено методом (см. $jamComputedCached);
+     * присвоенные значения (extra/explicit/updatable, в т.ч. поля, объявленные
+     * одновременно в computed и extra) не трогаем.
      */
     private function forgetComputedValues(): void
     {
-        $computed = $this->getComputed();
-        if (!$computed || !$this->jamDataEx) {
-            return;
+        foreach ($this->jamComputedCached as $prop => $_) {
+            unset($this->jamDataEx[$prop]);
         }
-        // То же, что unset по array_diff($computed, updatable, explicit), но без построения
-        // разности на каждое присваивание: обычно в jamDataEx нет закэшированных computed.
-        foreach ($computed as $prop) {
-            if (
-                array_key_exists($prop, $this->jamDataEx)
-                && !in_array($prop, $this->getUpdatable())
-                && !in_array($prop, $this->getExplicit())
-            ) {
-                unset($this->jamDataEx[$prop]);
-            }
-        }
+        $this->jamComputedCached = [];
     }
 
     /**
