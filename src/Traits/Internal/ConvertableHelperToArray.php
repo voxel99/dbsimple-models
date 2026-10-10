@@ -216,7 +216,7 @@ class ConvertableHelperToArray
 
     private function getTraceFields()
     {
-        $lists = [
+        $traceFields = array_unique(array_merge(
             array_keys($this->model->getDataDB()),
             array_keys($this->model->getDataEX()),
             $this->relationAliases(),
@@ -224,45 +224,22 @@ class ConvertableHelperToArray
             $this->modelHidden,
             $this->modelExtra,
             $this->modelUpdatable,
-            $this->explicit,
-        ];
-        // array_unique() сортирует строки (O(n log n)) на каждую модель; здесь — один проход
-        // с тем же результатом: первые вхождения в исходном порядке, сравнение как у SORT_STRING
-        // (для ключей int|string совпадает с равенством ключей массива).
-        $traceFields = [];
-        $seen = [];
-        foreach ($lists as $list) {
-            foreach ($list as $item) {
-                if (!is_string($item) && !is_int($item)) {
-                    $traceFields = array_unique(array_merge(...$lists));
-                    $seen = null;
-                    break 2;
-                }
-                if (!isset($seen[$item])) {
-                    $seen[$item] = true;
-                    $traceFields[] = $item;
-                }
-            }
-        }
+            $this->explicit
+        ));
 
-        // Пока список не менялся, $seen — ровно множество его значений
-        $seenIsExact = $seen !== null;
         if ($this->exclude) {
             $traceFields = array_diff($traceFields, (array)$this->exclude);
-            $seenIsExact = false;
         }
 
         if ($this->flagValues[Model::FLAG_INTERNAL_DATABASE]) {
             $traceFields = array_map(function ($item) {
                 return strpos($item, ":") ? $item : $item . ":" . CastClosure::CAST_DB;
             }, $traceFields);
-            $seenIsExact = false;
         }
 
         foreach ([Model::PIVOT_FIELD, Model::TITLES_FIELD, Model::IDENTIFIERS_FIELD] as $f) {
-            // Для нечисловых строк '@...' нестрогий array_search() совпадает с проверкой ключа
-            $found = $seenIsExact ? isset($seen[$f]) : array_search($f, $traceFields) !== false;
-            if (!$found) {
+            $pivotIndex = array_search($f, $traceFields);
+            if ($pivotIndex === false) {
                 $traceFields[] = $f;
             }
         }
@@ -557,7 +534,7 @@ class ConvertableHelperToArray
 
         if ($this->srcFields && $this->cutFields) {
             $returnKeys = array_flip($this->srcFields);
-            // + check? $this->flagValues[Model::FLAG_PIVOT]
+            // + check? $this->getFlag(Model::FLAG_PIVOT)
             foreach ([Model::PIVOT_FIELD, Model::TITLES_FIELD, Model::IDENTIFIERS_FIELD] as $f) {
                 $returnKeys[$f] = true;
             }
