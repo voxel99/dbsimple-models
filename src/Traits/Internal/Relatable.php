@@ -192,9 +192,14 @@ trait Relatable
     public function isRelationProp($prop)
     {
         if (is_string($prop) && !is_numeric($prop) && (self::$jamPlainRelations[static::class] ?? $this->jamDetectPlainRelations())) {
-            // Вызывается на каждый ключ гидрации — без лишнего вызова getRelationByAlias()
+            // Вызывается на каждый ключ гидрации — без лишнего вызова getRelationByAlias().
+            // Если ни в одном массиве нет непустого значения, отношения нет; при совпадении
+            // алиасов в нескольких массивах решает порядок getAllRelations().
             if (isset($this->belongs[$prop])) {
                 return true;
+            }
+            if (!isset($this->hasOne[$prop]) && !isset($this->hasMany[$prop])) {
+                return false;
             }
             return (bool) $this->jamRelationByAliasDirect($prop);
         }

@@ -509,7 +509,11 @@ trait DynamicProps
         $service = $this->getService();
         if (
             !(empty($fields)
-            || $this->isKnownField($prop, $fields)
+            // То же, что isKnownField(), без вызова метода, когда индекс класса уже построен
+            || ((($fieldIndex = self::$jamFieldIndexCache[static::class] ?? null) !== null
+                && $fieldIndex[0] === $fields && $fieldIndex[1] !== null && !is_numeric($prop))
+                ? isset($fieldIndex[1][$prop])
+                : $this->isKnownField($prop, $fields))
             || in_array($prop, $service)
             || $this->isRelationProp($prop)
             || ($prop === static::PIVOT_FIELD)
