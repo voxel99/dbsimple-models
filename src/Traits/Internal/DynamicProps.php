@@ -72,6 +72,16 @@ trait DynamicProps
      * @var array<class-string, array<int, string>>
      */
     private static array $jamClassMethodsCache = [];
+    /**
+     * Методы класса как set: [class][method] => index (array_flip от get_class_methods)
+     * @var array<class-string, array<string, int>>
+     */
+    private static array $jamClassMethodsSetCache = [];
+    /**
+     * Имена методов change* по свойствам: [class][prop] => имя метода или false, если метода нет
+     * @var array<class-string, array<string, string|false>>
+     */
+    private static array $jamChangeMethodCache = [];
 
     /**
      * Данные (правила) для конвертации значений полей из String
@@ -148,6 +158,54 @@ trait DynamicProps
             }
         }
         return $this->jamClassMethods;
+    }
+
+    /**
+     * Имя метода change{Prop} для свойства или false, если такого метода нет.
+     * Результат кешируется по конкретному классу (static::class), поэтому наследники
+     * и классы с разными наборами change* не пересекаются.
+     */
+    private function resolveChangeMethodName(string $prop): string|false
+    {
+        $className = static::class;
+        if (isset(self::$jamChangeMethodCache[$className][$prop])) {
+            return self::$jamChangeMethodCache[$className][$prop];
+        }
+        if (!isset(self::$jamClassMethodsSetCache[$className])) {
+            self::$jamClassMethodsSetCache[$className] = array_flip($this->__getClassMethods());
+        }
+        $methodName = "change" . CamelCase::to($prop);
+        $result = isset(self::$jamClassMethodsSetCache[$className][$methodName]) ? $methodName : false;
+        self::$jamChangeMethodCache[$className][$prop] = $result;
+        return $result;
+    }
+
+    /**
+     * Вызывает метод change{Prop}($value, $oldValue) с усыплённым охранником защищённых полей.
+     */
+    private function invokeChangeMethod(string $methodName, $prop, $value, $dataLayer)
+    {
+        // Читаем предыдущее значение свойства
+        $oldValue = $dataLayer === CastClosure::CAST_EXTERNAL
+            ? (isset($this->jamDataEx[$prop]) ? $this->jamDataEx[$prop] : null)
+            : (isset($this->jamDataDb[$prop]) ? $this->jamDataDb[$prop] : null);
+        // Внутри метода changeProp можно обращаться и устанавливать защищённые переменные
+        $guard_is_sleep = $this->jamGuardSleep;
+        // Усыпляем охранника
+        if (!$this->jamGuardSleep) {
+            $this->jamGuardSleep = true;
+        }
+        // Вызываем метод
+        $return_value = $this->{$methodName}($value, $oldValue);
+        // Если забыли вернуть новое значение, то ошибка
+        if (($return_value === null) && ($value !== null)) {
+            throw new ModelException(sprintf("%s::%s must return a value", get_class($this), $methodName));
+        }
+        // Будим охранника, если усыпили ранее перед вызовом метода
+        if (!$guard_is_sleep) {
+            $this->jamGuardSleep = false;
+        }
+        return $return_value;
     }
 
     public function __isset($prop)
@@ -577,9 +635,9 @@ trait DynamicProps
             }
         }
 
-        $changeMethod = $this->findChangePropertyMethod($prop, $value, $dataLayer);
-        if ($changeMethod) {
-            $value = call_user_func($changeMethod);
+        $changeMethodName = $this->resolveChangeMethodName($prop);
+        if ($changeMethodName !== false) {
+            $value = $this->invokeChangeMethod($changeMethodName, $prop, $value, $dataLayer);
         }
         if (($value instanceof stdClass) || is_array($value)) {
             $value = $this->normalizeRelationAssignedValue($prop, $value);
@@ -868,36 +926,14 @@ trait DynamicProps
      */
     public function findChangePropertyMethod($prop, $value, $dataLayer)
     {
-        $return_method_name = null;
         // Если есть метод change{$Prop}, вызываем его с параметром $value
-        $methods = $this->__getClassMethods();
-        $method_name = "change" . CamelCase::to($prop);
-        if (in_array($method_name, $methods)) {
-            $return_method_name = function () use ($method_name, $prop, $value, $dataLayer) {
-                // Читаем предыдущее значение свойства
-                $oldValue = $dataLayer === CastClosure::CAST_EXTERNAL
-                    ? (isset($this->jamDataEx[$prop]) ? $this->jamDataEx[$prop] : null)
-                    : (isset($this->jamDataDb[$prop]) ? $this->jamDataDb[$prop] : null);
-                // Внутри метода changeProp можно обращаться и устанавливать защищённые переменные
-                $guard_is_sleep = $this->jamGuardSleep;
-                // Усыпляем охранника
-                if (!$this->jamGuardSleep) {
-                    $this->jamGuardSleep = true;
-                }
-                // Вызываем метод
-                $return_value = $this->{$method_name}($value, $oldValue);
-                // Если забыли вернуть новое значение, то ошибка
-                if (($return_value === null) && ($value !== null)) {
-                    throw new ModelException(sprintf("%s::%s must return a value", get_class($this), $method_name));
-                }
-                // Будим охранника, если усыпили ранее перед вызовом метода
-                if (!$guard_is_sleep) {
-                    $this->jamGuardSleep = false;
-                }
-                return $return_value;
-            };
+        $method_name = $this->resolveChangeMethodName((string) $prop);
+        if ($method_name === false) {
+            return null;
         }
-        return $return_method_name;
+        return function () use ($method_name, $prop, $value, $dataLayer) {
+            return $this->invokeChangeMethod($method_name, $prop, $value, $dataLayer);
+        };
     }
 
     /**
