@@ -195,26 +195,6 @@ trait DynamicProps
         return $this->castTo($prop, $value, false);
     }
 
-    /**
-     * @return array{0: string, 1: string|false}
-     */
-    private function splitDynamicProp(string $prop): array
-    {
-        $dataLayer = false;
-
-        if (strpos($prop, ":")) {
-            [$prop, $dataLayer] = ArrayHelper::stringCommasToArray($prop, ":");
-        }
-
-        return [$prop, $dataLayer];
-    }
-
-    private function isComputedOrExplicitProp(string $prop, array $computed, array $explicit): bool
-    {
-        return (!empty($computed) && in_array($prop, $computed))
-            || (!empty($explicit) && in_array($prop, $explicit));
-    }
-
     private function readComputedOrExplicitValue(string $prop, array $updatable)
     {
         if (!isset($this->jamDataEx[$prop])) {
@@ -252,17 +232,22 @@ trait DynamicProps
 
     public function __get($prop)
     {
-        [$prop, $dataLayer] = $this->splitDynamicProp($prop);
+        // Шаги чтения записаны в теле метода (горячий путь toArray и прикладного кода);
+        // публичные геттеры описаний вызываются, как и раньше.
+        $dataLayer = false;
+        if (strpos($prop, ":")) {
+            [$prop, $dataLayer] = ArrayHelper::stringCommasToArray($prop, ":");
+        }
         $explicit = $this->getExplicit();
         $computed = $this->getComputed();
         $extra = $this->getExtra();
         $updateble = $this->getUpdatable();
 
-        if ($this->isComputedOrExplicitProp($prop, $computed, $explicit)) {
+        if (($computed && in_array($prop, $computed)) || ($explicit && in_array($prop, $explicit))) {
             return $this->readComputedOrExplicitValue($prop, $updateble);
         }
 
-        if (!empty($extra) && in_array($prop, $extra)) {
+        if ($extra && in_array($prop, $extra)) {
             if (isset($this->jamDataEx[$prop])) {
                 return $this->jamDataEx[$prop];
             }
@@ -270,8 +255,21 @@ trait DynamicProps
             return null;
         }
 
-        if ($this->hasStoredDynamicValue($prop)) {
-            return $this->readStoredDynamicValue($prop, $dataLayer);
+        if ($dataLayer === CastClosure::CAST_DB) {
+            if (isset($this->jamDataDb[$prop])) {
+                return $this->jamDataDb[$prop];
+            }
+            if (isset($this->jamDataEx[$prop])) {
+                return $this->jamDataDb[$prop] = $this->castExternalToDb($prop, $this->jamDataEx[$prop]);
+            }
+            return null;
+        }
+
+        if (isset($this->jamDataEx[$prop])) {
+            return $this->jamDataEx[$prop];
+        }
+        if (isset($this->jamDataDb[$prop])) {
+            return $this->jamDataEx[$prop] = $this->castDbToExternal($prop, $this->jamDataDb[$prop]);
         }
 
         return null;
@@ -544,7 +542,7 @@ trait DynamicProps
      */
     public function getFields()
     {
-        return $this->jamFields ?: $this->lazyFieldList($this->jamFields, $this->fields);
+        return $this->jamFields ?: ($this->fields === '' ? [] : $this->lazyFieldList($this->jamFields, $this->fields));
     }
 
     /**
@@ -554,27 +552,27 @@ trait DynamicProps
      */
     public function getGuarded()
     {
-        return $this->jamGuarded ?: $this->lazyFieldList($this->jamGuarded, $this->guarded);
+        return $this->jamGuarded ?: ($this->guarded === '' ? [] : $this->lazyFieldList($this->jamGuarded, $this->guarded));
     }
 
     public function getHidden()
     {
-        return $this->jamHidden ?: $this->lazyFieldList($this->jamHidden, $this->hidden);
+        return $this->jamHidden ?: ($this->hidden === '' ? [] : $this->lazyFieldList($this->jamHidden, $this->hidden));
     }
 
     public function getComputed()
     {
-        return $this->jamComputed ?: $this->lazyFieldList($this->jamComputed, $this->computed);
+        return $this->jamComputed ?: ($this->computed === '' ? [] : $this->lazyFieldList($this->jamComputed, $this->computed));
     }
 
     public function getExplicit(): array
     {
-        return $this->jamExplicit ?: $this->lazyFieldList($this->jamExplicit, $this->explicit);
+        return $this->jamExplicit ?: ($this->explicit === '' ? [] : $this->lazyFieldList($this->jamExplicit, $this->explicit));
     }
 
     public function getExtra()
     {
-        return $this->jamExtra ?: $this->lazyFieldList($this->jamExtra, $this->extra);
+        return $this->jamExtra ?: ($this->extra === '' ? [] : $this->lazyFieldList($this->jamExtra, $this->extra));
     }
 
     public function getService()
@@ -629,7 +627,7 @@ trait DynamicProps
 
     public function getUpdatable()
     {
-        return $this->jamUpdatable ?: $this->lazyFieldList($this->jamUpdatable, $this->updatable);
+        return $this->jamUpdatable ?: ($this->updatable === '' ? [] : $this->lazyFieldList($this->jamUpdatable, $this->updatable));
     }
 
     public function getType($field)
