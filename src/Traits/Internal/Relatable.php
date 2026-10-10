@@ -138,8 +138,9 @@ trait Relatable
         }
         // Поиск без array_merge всех отношений на каждый вызов (горячий путь __set/fromArray).
         // Порядок как у getAllRelations(): при совпадении алиасов побеждает последний массив.
-        // Целочисленные ключи array_merge перенумеровывает — для них прежний путь.
-        if ((string)(int)$prop === $prop) {
+        // Целочисленные ключи array_merge перенумеровывает — для них, как и для модели
+        // с переопределённым getAllRelations(), прежний путь.
+        if ((string)(int)$prop === $prop || !$this->jamIsOwnMethod('getAllRelations')) {
             return $this->getAllRelations()[$prop] ?? null;
         }
         if (array_key_exists($prop, $this->belongs)) {

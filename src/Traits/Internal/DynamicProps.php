@@ -95,6 +95,10 @@ trait DynamicProps
      */
     private static array $jamHasChangeThis = [];
     /**
+     * @var array<class-string, array<string, bool>>
+     */
+    private static array $jamOwnMethods = [];
+    /**
      * Правила JSON-ключей 1 уровня (см. jsonTopLevelKeyRules()) и описание кастов, из которого они получены
      * @var array<string, array<int, string>>
      */
@@ -395,9 +399,19 @@ trait DynamicProps
     }
 
     /**
+     * Метод $method не переопределён в классе модели (объявлен в самом Model).
+     * Горячие пути обходят такие методы напрямую, а для переопределённых идут прежним путём.
+     */
+    private function jamIsOwnMethod(string $method): bool
+    {
+        return self::$jamOwnMethods[static::class][$method]
+            ??= (new \ReflectionMethod($this, $method))->getDeclaringClass()->getName() === self::class;
+    }
+
+    /**
      * Массив/объект, присвоенный свойству-отношению (или @pivot), разворачивается в модель.
      * Класс определяется так же, как в getRelationClasses(), но без построения замыканий
-     * по всем отношениям на каждое присваивание.
+     * по всем отношениям на каждое присваивание (если модель не переопределила getRelationClasses()).
      */
     private function normalizeRelationAssignedValue(string $prop, $value)
     {
@@ -405,7 +419,13 @@ trait DynamicProps
             return $value;
         }
 
-        if ($prop === static::PIVOT_FIELD && $this->getPivotClass()) {
+        if (!$this->jamIsOwnMethod('getRelationClasses')) {
+            $map = $this->getRelationClasses();
+            if (!isset($map[$prop])) {
+                return $value;
+            }
+            $className = $map[$prop]($this);
+        } elseif ($prop === static::PIVOT_FIELD && $this->getPivotClass()) {
             $className = $this->getPivotClass();
         } else {
             $R = $this->getRelationByAlias($prop);

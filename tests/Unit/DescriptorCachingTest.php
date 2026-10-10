@@ -209,6 +209,19 @@ final class DescriptorCachingTest extends ModelTestCase
         $this->assertSame(['id' => 1, 'x' => 'x'], $model->toArray([]));
     }
 
+    public function testOverriddenRelationMethodsAreHonoured(): void
+    {
+        // getAllRelations() дополняет отношения динамически
+        $model = new CacheDynamicRelations(['id' => 1, 'extra_rel' => ['id' => 2, 'a' => '3']]);
+        $this->assertNotNull($model->getRelationByAlias('extra_rel'));
+        $this->assertInstanceOf(CacheParent::class, $model->extra_rel);
+
+        // getRelationClasses() подменяет класс при присваивании массива
+        $mapped = new CacheMappedRelations(['id' => 1]);
+        $mapped->friend = ['id' => 2, 'b' => 'z'];
+        $this->assertInstanceOf(CacheChild::class, $mapped->friend);
+    }
+
     public function testJsonTopLevelKeysPerClass(): void
     {
         $child = new CacheChild(['id' => 1]);
@@ -319,5 +332,35 @@ class CacheForcedComputed extends Model
     public function getFlag($flags, $letter)
     {
         return $letter === self::FLAG_COMPUTABLE ? true : ($flags[$letter] ?? false);
+    }
+}
+
+class CacheDynamicRelations extends Model
+{
+    protected string $fields = 'id';
+
+    public function getAllRelations(): array
+    {
+        return parent::getAllRelations() + [
+            'extra_rel' => new \Jam\Models\Relation(CacheParent::class, 'extra_rel', 'belongs', 'id', 'id'),
+        ];
+    }
+}
+
+class CacheMappedRelations extends Model
+{
+    protected string $fields = 'id';
+
+    public function __construct($data = null)
+    {
+        $this->belongs(CacheParent::class, 'friend', 'id', 'id');
+        parent::__construct($data);
+    }
+
+    public function getRelationClasses()
+    {
+        $classes = parent::getRelationClasses();
+        $classes['friend'] = fn() => CacheChild::class;
+        return $classes;
     }
 }
