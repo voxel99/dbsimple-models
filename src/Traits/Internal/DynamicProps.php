@@ -92,6 +92,32 @@ trait DynamicProps
      * @var array<class-string, array<string, object>>
      */
     private static array $jamCastClassCache = [];
+    /**
+     * @var array<class-string, array<string, array<int, string>>>
+     */
+    private static array $jamJsonTopLevelKeyRulesCache = [];
+    /**
+     * @var array<class-string, array{0: array<int, mixed>, 1: array<string, true>|null}>
+     */
+    private static array $jamFieldIndexCache = [];
+    /**
+     * @var array<class-string, bool>
+     */
+    private static array $jamHasChangeThis = [];
+    /**
+     * @var array<class-string, array<string, bool>>
+     */
+    private static array $jamOwnMethods = [];
+    /**
+     * @var array<class-string, bool> см. jamDetectPlainDescriptors()
+     */
+    private static array $jamPlainDescriptors = [];
+    /**
+     * Правила JSON-ключей 1 уровня (см. jsonTopLevelKeyRules()) и описание кастов, из которого они получены
+     * @var array<string, array<int, string>>
+     */
+    private array $jamJsonRules = [];
+    private array $jamJsonRulesCast = [];
 
     /**
      * Динамические данные модели для сохранения в БД
@@ -210,7 +236,7 @@ trait DynamicProps
         } else { // Обработка на основе cast-данных
             $cast = $this->getCast();
             if (!empty($cast[$prop])) {
-                $closureClass = CastClosure::fromCast($cast[$prop]);
+                $closureClass = CastClosure::sharedForField(static::class, $prop, $cast[$prop]);
                 if (!$closureClass) {
                     // Для внешнего представления делаем преобразование
                     if ($castEx) {
@@ -233,29 +259,6 @@ trait DynamicProps
         return $retValue;
     }
 
-    private function getDataLayer($prop, $value, $layer = CastClosure::CAST_DB)
-    {
-        if ($value === static::NULL_VALUE) {
-            $layer = CastClosure::CAST_DB;
-        } elseif (is_array($value) || is_object($value)) {
-            $layer = CastClosure::CAST_EXTERNAL;
-        } else {
-            $cast = $this->getCast();
-            if (!empty($cast[$prop])) {
-                $closureClass = CastClosure::fromCast($cast[$prop]);
-                if (!$closureClass) {
-                    $layer = CastClosure::CAST_DB;
-                } else {
-                    $layerCheck = $closureClass->checkValue($value);
-                    if ($layerCheck) {
-                        $layer = $layerCheck;
-                    }
-                }
-            }
-        }
-        return $layer;
-    }
-
     private function castDbToExternal($prop, $value)
     {
         return $this->castTo($prop, $value, true);
@@ -264,26 +267,6 @@ trait DynamicProps
     private function castExternalToDb($prop, $value)
     {
         return $this->castTo($prop, $value, false);
-    }
-
-    /**
-     * @return array{0: string, 1: string|false}
-     */
-    private function splitDynamicProp(string $prop): array
-    {
-        $dataLayer = false;
-
-        if (strpos($prop, ":")) {
-            [$prop, $dataLayer] = ArrayHelper::stringCommasToArray($prop, ":");
-        }
-
-        return [$prop, $dataLayer];
-    }
-
-    private function isComputedOrExplicitProp(string $prop, array $computed, array $explicit): bool
-    {
-        return (!empty($computed) && in_array($prop, $computed))
-            || (!empty($explicit) && in_array($prop, $explicit));
     }
 
     private function readComputedOrExplicitValue(string $prop, array $updatable)
@@ -323,17 +306,29 @@ trait DynamicProps
 
     public function __get($prop)
     {
-        [$prop, $dataLayer] = $this->splitDynamicProp($prop);
-        $explicit = $this->getExplicit();
-        $computed = $this->getComputed();
-        $extra = $this->getExtra();
-        $updateble = $this->getUpdatable();
+        // Шаги чтения записаны в теле метода (горячий путь toArray и прикладного кода);
+        // публичные геттеры описаний вызываются, как и раньше.
+        $dataLayer = false;
+        if (strpos($prop, ":")) {
+            [$prop, $dataLayer] = ArrayHelper::stringCommasToArray($prop, ":");
+        }
+        if (self::$jamPlainDescriptors[static::class] ?? $this->jamDetectPlainDescriptors()) {
+            $explicit = $this->jamExplicit ?: $this->getExplicit();
+            $computed = $this->jamComputed ?: $this->getComputed();
+            $extra = $this->jamExtra ?: $this->getExtra();
+            $updateble = $this->jamUpdatable ?: $this->getUpdatable();
+        } else {
+            $explicit = $this->getExplicit();
+            $computed = $this->getComputed();
+            $extra = $this->getExtra();
+            $updateble = $this->getUpdatable();
+        }
 
-        if ($this->isComputedOrExplicitProp($prop, $computed, $explicit)) {
+        if (($computed && in_array($prop, $computed)) || ($explicit && in_array($prop, $explicit))) {
             return $this->readComputedOrExplicitValue($prop, $updateble);
         }
 
-        if (!empty($extra) && in_array($prop, $extra)) {
+        if ($extra && in_array($prop, $extra)) {
             if (isset($this->jamDataEx[$prop])) {
                 return $this->jamDataEx[$prop];
             }
@@ -341,35 +336,55 @@ trait DynamicProps
             return null;
         }
 
-        if ($this->hasStoredDynamicValue($prop)) {
-            return $this->readStoredDynamicValue($prop, $dataLayer);
+        if ($dataLayer === CastClosure::CAST_DB) {
+            if (isset($this->jamDataDb[$prop])) {
+                return $this->jamDataDb[$prop];
+            }
+            if (isset($this->jamDataEx[$prop])) {
+                return $this->jamDataDb[$prop] = $this->castExternalToDb($prop, $this->jamDataEx[$prop]);
+            }
+            return null;
+        }
+
+        if (isset($this->jamDataEx[$prop])) {
+            return $this->jamDataEx[$prop];
+        }
+        if (isset($this->jamDataDb[$prop])) {
+            return $this->jamDataEx[$prop] = $this->castDbToExternal($prop, $this->jamDataDb[$prop]);
         }
 
         return null;
     }
 
-    private function canAssignToKnownModelProp(string $prop, array $fields): bool
+    /**
+     * in_array($prop, $fields) через индекс [поле => true], общий для класса. Список полей
+     * экземпляра обычно тот же массив, что и у остальных экземпляров класса (сравнение
+     * идентичных массивов — проверка указателя). Индекс строится, только если все поля —
+     * нечисловые строки: для них isset() совпадает с нестрогим in_array().
+     */
+    private function isKnownField(string $prop, array $fields): bool
     {
-        return empty($fields)
-            || in_array($prop, $fields)
-            || in_array($prop, $this->getService())
-            || $this->isRelationProp($prop)
-            || ($prop === static::PIVOT_FIELD)
-            || ($prop === static::TITLES_FIELD)
-            || ($prop === static::IDENTIFIERS_FIELD);
-    }
-
-    private function shouldSkipServiceFieldAssignment(string $prop): bool
-    {
-        return in_array($prop, $this->getService()) && $prop !== static::SKIP_UPDATE;
-    }
-
-    private function validateDynamicSetProp(string $prop, array $fields, array $map): void
-    {
-        if ($this->canAssignToKnownModelProp($prop, $fields)) {
-            return;
+        $entry = self::$jamFieldIndexCache[static::class] ?? null;
+        if ($entry === null || $entry[0] !== $fields) {
+            $index = [];
+            foreach ($fields as $field) {
+                if (!is_string($field) || is_numeric($field)) {
+                    $index = null;
+                    break;
+                }
+                $index[$field] = true;
+            }
+            $entry = self::$jamFieldIndexCache[static::class] = [$fields, $index];
         }
+        if ($entry[1] === null || is_numeric($prop)) {
+            return in_array($prop, $fields);
+        }
+        return isset($entry[1][$prop]);
+    }
 
+    private function throwIncorrectDynamicSetProp(string $prop, array $fields): never
+    {
+        $map = $this->getRelationClasses();
         $extra = $this->getExtra();
         throw new ModelException("[" . $prop . "] is not a correct field of class " . get_class($this)
             . ". Fill your \$field property: " . implode(", ", $fields)
@@ -386,14 +401,13 @@ trait DynamicProps
         return $prop === $rule;
     }
 
-    private function jsonFieldForTopLevelKey(string $prop): ?string
+    /**
+     * @param array<string, array<int, string>> $jsonRules см. jsonTopLevelKeyRules()
+     */
+    private function jsonFieldForTopLevelKey(string $prop, array $jsonRules): ?string
     {
-        foreach ($this->getCast() as $field => $cast) {
-            if (($cast->type ?? null) !== CastClosure::TYPE_JSON || empty($cast->top_level_keys)) {
-                continue;
-            }
-
-            foreach ($cast->top_level_keys as $rule) {
+        foreach ($jsonRules as $field => $rules) {
+            foreach ($rules as $rule) {
                 if ($this->jsonTopLevelKeyMatches($prop, $rule)) {
                     return $field;
                 }
@@ -401,6 +415,36 @@ trait DynamicProps
         }
 
         return null;
+    }
+
+    /**
+     * JSON-поля с перечнем ключей 1 уровня: [поле => правила]. Зависит только от описания
+     * кастов, а оно общее для класса (см. getCast()), поэтому разбирается один раз на класс,
+     * а не перебором всех кастов на каждое присваивание.
+     *
+     * @return array<string, array<int, string>>
+     */
+    private function jsonTopLevelKeyRules(array $cast): array
+    {
+        if (!$cast) {
+            return [];
+        }
+        $className = get_class($this);
+        // Кеш действителен, пока экземпляр работает с тем же описанием кастов, что и класс
+        if (isset(self::$jamJsonTopLevelKeyRulesCache[$className]) && $cast === (self::$jamCastClassCache[$className] ?? null)) {
+            return self::$jamJsonTopLevelKeyRulesCache[$className];
+        }
+        $rules = [];
+        foreach ($cast as $field => $castItem) {
+            if (($castItem->type ?? null) !== CastClosure::TYPE_JSON || empty($castItem->top_level_keys)) {
+                continue;
+            }
+            $rules[$field] = $castItem->top_level_keys;
+        }
+        if ($cast === (self::$jamCastClassCache[$className] ?? null)) {
+            self::$jamJsonTopLevelKeyRulesCache[$className] = $rules;
+        }
+        return $rules;
     }
 
     private function storeJsonTopLevelKeyValue(string $jsonField, string $prop, $value): void
@@ -423,46 +467,59 @@ trait DynamicProps
         $this->callChangeThisMethod($jsonField);
     }
 
-    private function assertDynamicPropNotGuarded(string $prop): void
+    /**
+     * Класс модели не переопределяет геттеры описаний (getFields/getComputed/getCast/...).
+     * Тогда горячие __get/__set читают уже разобранные списки экземпляра напрямую: непустой
+     * кеш — ровно то, что вернул бы геттер. Пустой кеш по-прежнему идёт через геттер
+     * (ленивый разбор строки описания).
+     */
+    private function jamDetectPlainDescriptors(): bool
     {
-        if (!$this->jamGuardSleep && in_array($prop, $this->getGuarded())) {
-            throw new ModelException($prop . " is guarded in class " . get_class($this));
+        $plain = true;
+        foreach (
+            ['getFields', 'getExplicit', 'getExtra', 'getComputed', 'getUpdatable', 'getService', 'getCast'] as $method
+        ) {
+            $plain = $plain && (new \ReflectionMethod($this, $method))->getDeclaringClass()->getName() === self::class;
         }
+        return self::$jamPlainDescriptors[static::class] = $plain;
     }
 
-    private function shouldSkipComputedAssignment(string $prop, array $computed, array $updatable): bool
+    /**
+     * Метод $method не переопределён в классе модели (объявлен в самом Model).
+     * Горячие пути обходят такие методы напрямую, а для переопределённых идут прежним путём.
+     */
+    private function jamIsOwnMethod(string $method): bool
     {
-        return !empty($computed) && in_array($prop, $computed) && !in_array($prop, $updatable);
+        return self::$jamOwnMethods[static::class][$method]
+            ??= (new \ReflectionMethod($this, $method))->getDeclaringClass()->getName() === self::class;
     }
 
-    private function storeExplicitOrExtraValue(string $prop, $value, array $props): bool
+    /**
+     * Массив/объект, присвоенный свойству-отношению (или @pivot), разворачивается в модель.
+     * Класс определяется так же, как в getRelationClasses(), но без построения замыканий
+     * по всем отношениям на каждое присваивание (если модель не переопределила getRelationClasses()).
+     */
+    private function normalizeRelationAssignedValue(string $prop, $value)
     {
-        if (empty($props) || !in_array($prop, $props)) {
-            return false;
-        }
-
-        $this->jamDataEx[$prop] = $value;
-        return true;
-    }
-
-    private function resolveDynamicSetLayer(string $prop, $value, $dataLayer)
-    {
-        return $dataLayer ?: $this->getDataLayer($prop, $value);
-    }
-
-    private function applyDynamicChangeMethod(string $prop, $value, $dataLayer)
-    {
-        $methodName = $this->resolveChangeMethodName($prop);
-        return $methodName === false ? $value : $this->invokeChangeMethod($methodName, $prop, $value, $dataLayer);
-    }
-
-    private function normalizeRelationAssignedValue(string $prop, $value, array $map)
-    {
-        if (!isset($map[$prop]) || (!(($value instanceof stdClass) || is_array($value)))) {
+        if (!(($value instanceof stdClass) || is_array($value))) {
             return $value;
         }
 
-        $className = $map[$prop]($this);
+        if (!$this->jamIsOwnMethod('getRelationClasses')) {
+            $map = $this->getRelationClasses();
+            if (!isset($map[$prop])) {
+                return $value;
+            }
+            $className = $map[$prop]($this);
+        } elseif ($prop === static::PIVOT_FIELD && $this->getPivotClass()) {
+            $className = $this->getPivotClass();
+        } else {
+            $R = $this->getRelationByAlias($prop);
+            if (!$R) {
+                return $value;
+            }
+            $className = $R->getClass($this);
+        }
         if (!$className) {
             // Polymorphic relations may legitimately have no target class for some types,
             // for example PostAttach(upload_type=text|toc). In that case drop raw payload.
@@ -488,47 +545,114 @@ trait DynamicProps
         unset($this->jamDataEx[$prop]);
     }
 
+    /**
+     * Шаги присваивания записаны в теле метода, а не отдельными приватными методами:
+     * это самый горячий путь гидрации (каждое поле каждой вложенной модели), и вызовы
+     * мелких хелперов составляли заметную часть его стоимости. Публичные геттеры описаний
+     * (getFields/getComputed/...) по-прежнему вызываются — модель может их переопределить.
+     */
     public function __set($prop, $value)
     {
-        [$prop, $dataLayer] = $this->splitDynamicProp($prop);
-        $fields = $this->getFields();
-        $map = $this->getRelationClasses();
+        $dataLayer = false;
+        if (strpos($prop, ":")) {
+            [$prop, $dataLayer] = ArrayHelper::stringCommasToArray($prop, ":");
+        }
+        $plain = self::$jamPlainDescriptors[static::class] ?? $this->jamDetectPlainDescriptors();
+        $fields = $plain ? ($this->jamFields ?: $this->getFields()) : $this->getFields();
 
-        if ($this->storeExplicitOrExtraValue($prop, $value, $this->getExplicit())) {
+        $explicit = $plain ? ($this->jamExplicit ?: $this->getExplicit()) : $this->getExplicit();
+        if ($explicit && in_array($prop, $explicit)) {
+            $this->jamDataEx[$prop] = $value;
             return;
         }
 
-        if ($this->storeExplicitOrExtraValue($prop, $value, $this->getExtra())) {
+        $extra = $plain ? ($this->jamExtra ?: $this->getExtra()) : $this->getExtra();
+        if ($extra && in_array($prop, $extra)) {
+            $this->jamDataEx[$prop] = $value;
             return;
         }
 
         // Игнорируем присваивание вычислимых свойств,
         // если модель явно не разрешила запись через extra/explicit/updatable.
-        $computed = $this->getComputed();
-        $updatable = $this->getUpdatable();
-
-        if ($this->shouldSkipComputedAssignment($prop, $computed, $updatable)) {
+        $computed = $plain ? ($this->jamComputed ?: $this->getComputed()) : $this->getComputed();
+        $updatable = $plain ? ($this->jamUpdatable ?: $this->getUpdatable()) : $this->getUpdatable();
+        if ($computed && in_array($prop, $computed) && !in_array($prop, $updatable)) {
             return;
         }
 
-        $jsonField = $this->jsonFieldForTopLevelKey($prop);
-        if ($jsonField !== null) {
-            $this->storeJsonTopLevelKeyValue($jsonField, $prop, $value);
+        $cast = $plain ? ($this->jamCast ?: $this->getCast()) : $this->getCast();
+        if ($cast !== $this->jamJsonRulesCast) {
+            $this->jamJsonRules = $this->jsonTopLevelKeyRules($cast);
+            $this->jamJsonRulesCast = $cast;
+        }
+        if ($this->jamJsonRules) {
+            $jsonField = $this->jsonFieldForTopLevelKey($prop, $this->jamJsonRules);
+            if ($jsonField !== null) {
+                $this->storeJsonTopLevelKeyValue($jsonField, $prop, $value);
+                return;
+            }
+        }
+
+        $service = $plain ? ($this->jamService ?: $this->getService()) : $this->getService();
+        if (
+            !(empty($fields)
+            // То же, что isKnownField(), без вызова метода, когда индекс класса уже построен
+            || ((($fieldIndex = self::$jamFieldIndexCache[static::class] ?? null) !== null
+                && $fieldIndex[0] === $fields && $fieldIndex[1] !== null && !is_numeric($prop))
+                ? isset($fieldIndex[1][$prop])
+                : $this->isKnownField($prop, $fields))
+            || in_array($prop, $service)
+            || $this->isRelationProp($prop)
+            || ($prop === static::PIVOT_FIELD)
+            || ($prop === static::TITLES_FIELD)
+            || ($prop === static::IDENTIFIERS_FIELD))
+        ) {
+            $this->throwIncorrectDynamicSetProp($prop, $fields);
+        }
+        if (in_array($prop, $service) && $prop !== static::SKIP_UPDATE) {
             return;
         }
 
-        $this->validateDynamicSetProp($prop, $fields, $map);
-        if ($this->shouldSkipServiceFieldAssignment($prop)) {
-            return;
+        if (!$this->jamGuardSleep && in_array($prop, $this->getGuarded())) {
+            throw new ModelException($prop . " is guarded in class " . get_class($this));
         }
 
-        $this->assertDynamicPropNotGuarded($prop);
+        if (!$dataLayer) {
+            // Слой данных по значению: NULL_VALUE — db, массив/объект — внешний, иначе решает каст
+            $dataLayer = CastClosure::CAST_DB;
+            if ($value === static::NULL_VALUE) {
+                // CAST_DB
+            } elseif (is_array($value) || is_object($value)) {
+                $dataLayer = CastClosure::CAST_EXTERNAL;
+            } elseif (!empty($cast[$prop])) {
+                $closureClass = CastClosure::sharedForField(static::class, $prop, $cast[$prop]);
+                if ($closureClass) {
+                    $layerCheck = $closureClass->checkValue($value);
+                    if ($layerCheck) {
+                        $dataLayer = $layerCheck;
+                    }
+                }
+            }
+        }
 
-        $dataLayer = $this->resolveDynamicSetLayer($prop, $value, $dataLayer);
-        $value = $this->applyDynamicChangeMethod($prop, $value, $dataLayer);
-        $value = $this->normalizeRelationAssignedValue($prop, $value, $map);
-        $this->storeDynamicAssignedValue($prop, $value, $dataLayer);
-        $this->forgetComputedValues();
+        $changeMethodName = $this->resolveChangeMethodName($prop);
+        if ($changeMethodName !== false) {
+            $value = $this->invokeChangeMethod($changeMethodName, $prop, $value, $dataLayer);
+        }
+        if (($value instanceof stdClass) || is_array($value)) {
+            $value = $this->normalizeRelationAssignedValue($prop, $value);
+        }
+
+        if ($dataLayer === CastClosure::CAST_EXTERNAL) {
+            $this->jamDataEx[$prop] = $value;
+            unset($this->jamDataDb[$prop]);
+        } else {
+            $this->jamDataDb[$prop] = $value;
+            unset($this->jamDataEx[$prop]);
+        }
+        if ($this->jamDataEx) {
+            $this->forgetComputedValues();
+        }
         $this->callChangeThisMethod($prop);
     }
 
@@ -540,11 +664,19 @@ trait DynamicProps
     private function forgetComputedValues(): void
     {
         $computed = $this->getComputed();
-        if (!$computed) {
+        if (!$computed || !$this->jamDataEx) {
             return;
         }
-        foreach (array_diff($computed, $this->getUpdatable(), $this->getExplicit()) as $prop) {
-            unset($this->jamDataEx[$prop]);
+        // То же, что unset по array_diff($computed, updatable, explicit), но без построения
+        // разности на каждое присваивание: обычно в jamDataEx нет закэшированных computed.
+        foreach ($computed as $prop) {
+            if (
+                array_key_exists($prop, $this->jamDataEx)
+                && !in_array($prop, $this->getUpdatable())
+                && !in_array($prop, $this->getExplicit())
+            ) {
+                unset($this->jamDataEx[$prop]);
+            }
         }
     }
 
@@ -555,7 +687,7 @@ trait DynamicProps
      */
     public function getFields()
     {
-        return $this->lazyFieldList($this->jamFields, $this->fields);
+        return $this->jamFields ?: ($this->fields === '' ? [] : $this->lazyFieldList($this->jamFields, $this->fields));
     }
 
     /**
@@ -565,27 +697,27 @@ trait DynamicProps
      */
     public function getGuarded()
     {
-        return $this->lazyFieldList($this->jamGuarded, $this->guarded);
+        return $this->jamGuarded ?: ($this->guarded === '' ? [] : $this->lazyFieldList($this->jamGuarded, $this->guarded));
     }
 
     public function getHidden()
     {
-        return $this->lazyFieldList($this->jamHidden, $this->hidden);
+        return $this->jamHidden ?: ($this->hidden === '' ? [] : $this->lazyFieldList($this->jamHidden, $this->hidden));
     }
 
     public function getComputed()
     {
-        return $this->lazyFieldList($this->jamComputed, $this->computed);
+        return $this->jamComputed ?: ($this->computed === '' ? [] : $this->lazyFieldList($this->jamComputed, $this->computed));
     }
 
     public function getExplicit(): array
     {
-        return $this->lazyFieldList($this->jamExplicit, $this->explicit);
+        return $this->jamExplicit ?: ($this->explicit === '' ? [] : $this->lazyFieldList($this->jamExplicit, $this->explicit));
     }
 
     public function getExtra()
     {
-        return $this->lazyFieldList($this->jamExtra, $this->extra);
+        return $this->jamExtra ?: ($this->extra === '' ? [] : $this->lazyFieldList($this->jamExtra, $this->extra));
     }
 
     public function getService()
@@ -605,7 +737,9 @@ trait DynamicProps
      */
     private function lazyFieldList(array &$cache, string $source): array
     {
-        if (!$cache) {
+        // Пустое описание (у большинства моделей нет computed/explicit/extra/...) не кешируется
+        // в пустом массиве, поэтому раньше разбиралось заново на каждом вызове.
+        if (!$cache && $source !== '') {
             $cache = ArrayHelper::stringCommasToArray($source);
         }
         return $cache;
@@ -638,7 +772,7 @@ trait DynamicProps
 
     public function getUpdatable()
     {
-        return $this->lazyFieldList($this->jamUpdatable, $this->updatable);
+        return $this->jamUpdatable ?: ($this->updatable === '' ? [] : $this->lazyFieldList($this->jamUpdatable, $this->updatable));
     }
 
     public function getType($field)
@@ -810,7 +944,7 @@ trait DynamicProps
      */
     public function callChangeThisMethod($prop)
     {
-        if (method_exists($this, 'changeThis')) {
+        if (self::$jamHasChangeThis[static::class] ??= method_exists($this, 'changeThis')) {
             $this->changeThis($prop);
             return true;
         }
