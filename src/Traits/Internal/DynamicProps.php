@@ -659,6 +659,10 @@ trait DynamicProps
         if (($value instanceof stdClass) || is_array($value)) {
             $value = $this->normalizeRelationAssignedValue($prop, $value);
         }
+        // Присвоенная вручную связь считается загруженной (скаляры в связь не пишут — проверку пропускаем)
+        if (($value === null || is_array($value) || is_object($value)) && $this->isRelationProp($prop)) {
+            $this->markRelationLoaded($prop);
+        }
 
         if ($this->jamComputedCached) {
             unset($this->jamComputedCached[$prop]);

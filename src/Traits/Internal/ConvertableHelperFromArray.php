@@ -61,6 +61,11 @@ class ConvertableHelperFromArray
             $isRelation = $isModel && $prop->isRelationProp($k);
             if ($isRelation) {
                 $prop->markRelationLoaded($k);
+                // Пустая связь в свойство не попадает: $model->rel остаётся null, чтобы
+                // empty()/isset()/if ($model->rel) работали как раньше; факт загрузки — в isRelationLoaded()
+                if ($v === []) {
+                    continue;
+                }
             }
             // Игнорируем null-значения
             if (is_null($v) || (empty($v) && is_scalar($v) && !empty($cast[$k]->is_null))) {

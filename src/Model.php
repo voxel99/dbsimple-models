@@ -667,6 +667,9 @@ class Model extends ModelAbstract implements IRelationList
     {
         $serialized = $this->toArray(':dhx');
         $serialized['_connection'] = $this->jamConnection;
+        if ($loaded = $this->exportLoadedRelations()) {
+            $serialized['_loadedRelations'] = $loaded;
+        }
         return $serialized;
     }
 
@@ -677,11 +680,13 @@ class Model extends ModelAbstract implements IRelationList
             $this->setRelations($relationType, $copy->getRelations($relationType));
         }
         $this->jamConnection = $data['_connection'];
-        unset($data['_connection']);
+        $loaded = $data['_loadedRelations'] ?? [];
+        unset($data['_connection'], $data['_loadedRelations']);
         // Types может задаваться в конструкторе, который здесь не вызывается
         $this->types = $copy->types;
 
         $this->fromArray($data, true);
+        $this->importLoadedRelations($loaded);
         $this->db($this->jamConnection);
     }
 
