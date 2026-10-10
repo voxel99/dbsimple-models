@@ -448,12 +448,17 @@ class ConvertableHelperToArray
     {
         $cast = $modelObject->getCast($debug);
         foreach ($cast as $k => $v) {
-            if (!isset($ret[$k]) || is_null($this->model->{$k})) {
+            if (!isset($ret[$k])) {
+                continue;
+            }
+            // Значение читается один раз (раньше — дважды подряд через __get)
+            $modelValue = $this->model->{$k};
+            if (is_null($modelValue)) {
                 continue;
             }
             $closureClass = CastClosure::sharedForField($modelObject::class, $k, $cast[$k]);
             if ($closureClass) {
-                $ret[$k] = $closureClass->stringValue($this->model->{$k});
+                $ret[$k] = $closureClass->stringValue($modelValue);
                 if ($this->flagValues[Model::FLAG_SKIP_NO]) {
                     $this->processSkipNo($ret, $k);
                 }

@@ -99,6 +99,10 @@ trait DynamicProps
      */
     private static array $jamOwnMethods = [];
     /**
+     * @var array<class-string, bool> см. jamDetectPlainDescriptors()
+     */
+    private static array $jamPlainDescriptors = [];
+    /**
      * Правила JSON-ключей 1 уровня (см. jsonTopLevelKeyRules()) и описание кастов, из которого они получены
      * @var array<string, array<int, string>>
      */
@@ -250,10 +254,17 @@ trait DynamicProps
         if (strpos($prop, ":")) {
             [$prop, $dataLayer] = ArrayHelper::stringCommasToArray($prop, ":");
         }
-        $explicit = $this->getExplicit();
-        $computed = $this->getComputed();
-        $extra = $this->getExtra();
-        $updateble = $this->getUpdatable();
+        if (self::$jamPlainDescriptors[static::class] ?? $this->jamDetectPlainDescriptors()) {
+            $explicit = $this->jamExplicit ?: $this->getExplicit();
+            $computed = $this->jamComputed ?: $this->getComputed();
+            $extra = $this->jamExtra ?: $this->getExtra();
+            $updateble = $this->jamUpdatable ?: $this->getUpdatable();
+        } else {
+            $explicit = $this->getExplicit();
+            $computed = $this->getComputed();
+            $extra = $this->getExtra();
+            $updateble = $this->getUpdatable();
+        }
 
         if (($computed && in_array($prop, $computed)) || ($explicit && in_array($prop, $explicit))) {
             return $this->readComputedOrExplicitValue($prop, $updateble);
@@ -399,6 +410,23 @@ trait DynamicProps
     }
 
     /**
+     * Класс модели не переопределяет геттеры описаний (getFields/getComputed/getCast/...).
+     * Тогда горячие __get/__set читают уже разобранные списки экземпляра напрямую: непустой
+     * кеш — ровно то, что вернул бы геттер. Пустой кеш по-прежнему идёт через геттер
+     * (ленивый разбор строки описания).
+     */
+    private function jamDetectPlainDescriptors(): bool
+    {
+        $plain = true;
+        foreach (
+            ['getFields', 'getExplicit', 'getExtra', 'getComputed', 'getUpdatable', 'getService', 'getCast'] as $method
+        ) {
+            $plain = $plain && (new \ReflectionMethod($this, $method))->getDeclaringClass()->getName() === self::class;
+        }
+        return self::$jamPlainDescriptors[static::class] = $plain;
+    }
+
+    /**
      * Метод $method не переопределён в классе модели (объявлен в самом Model).
      * Горячие пути обходят такие методы напрямую, а для переопределённых идут прежним путём.
      */
@@ -471,15 +499,16 @@ trait DynamicProps
         if (strpos($prop, ":")) {
             [$prop, $dataLayer] = ArrayHelper::stringCommasToArray($prop, ":");
         }
-        $fields = $this->getFields();
+        $plain = self::$jamPlainDescriptors[static::class] ?? $this->jamDetectPlainDescriptors();
+        $fields = $plain ? ($this->jamFields ?: $this->getFields()) : $this->getFields();
 
-        $explicit = $this->getExplicit();
+        $explicit = $plain ? ($this->jamExplicit ?: $this->getExplicit()) : $this->getExplicit();
         if ($explicit && in_array($prop, $explicit)) {
             $this->jamDataEx[$prop] = $value;
             return;
         }
 
-        $extra = $this->getExtra();
+        $extra = $plain ? ($this->jamExtra ?: $this->getExtra()) : $this->getExtra();
         if ($extra && in_array($prop, $extra)) {
             $this->jamDataEx[$prop] = $value;
             return;
@@ -487,13 +516,13 @@ trait DynamicProps
 
         // Игнорируем присваивание вычислимых свойств,
         // если модель явно не разрешила запись через extra/explicit/updatable.
-        $computed = $this->getComputed();
-        $updatable = $this->getUpdatable();
+        $computed = $plain ? ($this->jamComputed ?: $this->getComputed()) : $this->getComputed();
+        $updatable = $plain ? ($this->jamUpdatable ?: $this->getUpdatable()) : $this->getUpdatable();
         if ($computed && in_array($prop, $computed) && !in_array($prop, $updatable)) {
             return;
         }
 
-        $cast = $this->getCast();
+        $cast = $plain ? ($this->jamCast ?: $this->getCast()) : $this->getCast();
         if ($cast !== $this->jamJsonRulesCast) {
             $this->jamJsonRules = $this->jsonTopLevelKeyRules($cast);
             $this->jamJsonRulesCast = $cast;
@@ -506,7 +535,7 @@ trait DynamicProps
             }
         }
 
-        $service = $this->getService();
+        $service = $plain ? ($this->jamService ?: $this->getService()) : $this->getService();
         if (
             !(empty($fields)
             // То же, что isKnownField(), без вызова метода, когда индекс класса уже построен
