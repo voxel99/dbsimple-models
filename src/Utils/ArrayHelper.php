@@ -261,13 +261,13 @@ class ArrayHelper
      */
     public static function stringCommasToArray(string $data, string $delimiter = ",")
     {
-        $key = $delimiter . '/' . $data;
-        if (!isset(self::$explodedValues[$key])) {
-            self::$explodedValues[$key] = array_values(array_filter(array_map("trim", explode($delimiter, $data)), function ($item) {
+        // Двухуровневый ключ вместо склейки $delimiter . '/' . $data: на горячем пути
+        // (__get/__set, toArray) не создаётся новая строка и не пересчитывается её хеш —
+        // у строк-описаний модели (литералы свойств) хеш уже посчитан.
+        return self::$explodedValues[$delimiter][$data]
+            ??= array_values(array_filter(array_map("trim", explode($delimiter, $data)), function ($item) {
                 return !!$item;
             }));
-        }
-        return self::$explodedValues[$key];
     }
 
     /**

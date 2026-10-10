@@ -547,7 +547,9 @@ trait DynamicProps
      */
     private function lazyFieldList(array &$cache, string $source): array
     {
-        if (!$cache) {
+        // Пустое описание (у большинства моделей нет computed/explicit/extra/...) не кешируется
+        // в пустом массиве, поэтому раньше разбиралось заново на каждом вызове.
+        if (!$cache && $source !== '') {
             $cache = ArrayHelper::stringCommasToArray($source);
         }
         return $cache;
