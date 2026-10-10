@@ -10,28 +10,73 @@
 namespace Jam\Models\Utils;
 
 use InvalidArgumentException;
+use Jam\Models\Utils\Translit\BuiltinTransliterator;
+use Jam\Models\Utils\Translit\CallableTransliterator;
+use Jam\Models\Utils\Translit\TransliteratorInterface;
 
 use function parse_url;
 
 class Strings
 {
+    /**
+     * Словарь совпадает с глобальной функцией translit() приложений, которой раньше пользовался
+     * SlugEvaluatable: слаги и slug_hash, вычисленные через Strings::translit(), должны совпадать
+     * с уже сохранёнными в БД. Поэтому символы вне словаря (ß, ø, ł...) не транслитерируются,
+     * а заменяются разделителем, как и там.
+     */
     private const TRANSLIT_MAP = [
-        'а' => 'a', 'б' => 'b', 'в' => 'v', 'г' => 'g', 'д' => 'd', 'е' => 'e', 'ё' => 'e', 'ж' => 'zh',
-        'з' => 'z', 'и' => 'i', 'й' => 'y', 'к' => 'k', 'л' => 'l', 'м' => 'm', 'н' => 'n', 'о' => 'o',
-        'п' => 'p', 'р' => 'r', 'с' => 's', 'т' => 't', 'у' => 'u', 'ф' => 'f', 'х' => 'h', 'ц' => 'ts',
-        'ч' => 'ch', 'ш' => 'sh', 'щ' => 'sch', 'ъ' => '', 'ы' => 'y', 'ь' => '', 'э' => 'e', 'ю' => 'yu',
+        'а' => 'a', 'б' => 'b', 'в' => 'v', 'г' => 'g', 'д' => 'd', 'е' => 'e', 'ё' => 'yo', 'ж' => 'zh',
+        'з' => 'z', 'и' => 'i', 'й' => 'j', 'к' => 'k', 'л' => 'l', 'м' => 'm', 'н' => 'n', 'о' => 'o',
+        'п' => 'p', 'р' => 'r', 'с' => 's', 'т' => 't', 'у' => 'u', 'ф' => 'f', 'х' => 'h', 'ц' => 'c',
+        'ч' => 'ch', 'ш' => 'sh', 'щ' => 'shch', 'ъ' => '', 'ы' => 'y', 'ь' => '', 'э' => 'eh', 'ю' => 'yu',
         'я' => 'ya',
+        '"' => '', '\'' => '', '.' => '',
+        'ñ' => 'n', 'ç' => 'c', '¿' => '', '¡' => '',
+        'à' => 'a', 'á' => 'a', 'â' => 'a', 'ã' => 'a', 'ä' => 'a', 'å' => 'a',
+        'è' => 'e', 'é' => 'e', 'ê' => 'e', 'ë' => 'e',
+        'ì' => 'i', 'í' => 'i', 'î' => 'i', 'ï' => 'i',
+        'ò' => 'o', 'ó' => 'o', 'ô' => 'o', 'õ' => 'o', 'ö' => 'o',
+        'ù' => 'u', 'ú' => 'u', 'û' => 'u', 'ü' => 'u',
     ];
 
     /**
-     * Транслитерация (кириллица -> латиница) для URL: нижний регистр,
-     * всё, кроме [a-z0-9], заменяется разделителем.
+     * Транслитерация для URL (кириллица и латиница с диакритикой -> латиница, см. TRANSLIT_MAP):
+     * нижний регистр, кавычки и точки удаляются, остальное, кроме [a-z0-9], заменяется
+     * разделителем (подряд идущие — одним).
      */
     public static function translit(string $text, string $delimiter = '-'): string
     {
         $text = strtr(mb_strtolower($text, 'UTF-8'), self::TRANSLIT_MAP);
         $text = preg_replace('/[^a-z0-9]+/', $delimiter, $text) ?? '';
         return trim($text, $delimiter);
+    }
+
+    private static ?TransliteratorInterface $transliterator = null;
+
+    /**
+     * Подменить транслитерацию, которой пользуются слаги (SlugEvaluatable), для всего приложения;
+     * null — вернуть поведение по умолчанию (см. transliterator()).
+     */
+    public static function setTransliterator(?TransliteratorInterface $transliterator): void
+    {
+        self::$transliterator = $transliterator;
+    }
+
+    /**
+     * Текущая транслитерация: заданная через setTransliterator(); иначе глобальная функция
+     * translit($text, $delimiter) приложения, если она объявлена (совместимость со слагами,
+     * сохранёнными до появления Strings::translit()); иначе встроенная Strings::translit().
+     */
+    public static function transliterator(): TransliteratorInterface
+    {
+        if (self::$transliterator !== null) {
+            return self::$transliterator;
+        }
+        static $global = null, $builtin = null;
+        if (function_exists('translit')) {
+            return $global ??= new CallableTransliterator('translit');
+        }
+        return $builtin ??= new BuiltinTransliterator();
     }
 
     public static function swapPairs($str)

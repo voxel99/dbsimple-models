@@ -24,10 +24,13 @@ final class MysqlDialectTest extends DatabaseTestCase
     public function testInsertIgnore(): void
     {
         (new Tag(['name' => 'php']))->save();
-        $id = (new Tag(['name' => 'php']))->save([Model::SAVE_USE_INSERT_IGNORE => true]);
+        $tag = new Tag(['name' => 'php']);
+        $id = $tag->save([Model::SAVE_USE_INSERT_IGNORE => true]);
 
         $this->assertSame(0, $id);
         $this->assertSame(1, Tag::instance()->count());
+        // Пустой insert id не становится pk: следующий save() — не UPDATE ... WHERE id = 0
+        $this->assertNull($tag->id);
     }
 
     public function testInsertOnDuplicateKeyUpdateReturnsExistingId(): void

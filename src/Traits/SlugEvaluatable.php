@@ -3,6 +3,7 @@
 namespace Jam\Models\Traits;
 
 use Jam\Models\Utils\Strings;
+use Jam\Models\Utils\Translit\TransliteratorInterface;
 
 trait SlugEvaluatable
 {
@@ -37,10 +38,19 @@ trait SlugEvaluatable
         return $data;
     }
 
+    /**
+     * Транслитерация для слагов этой модели. По умолчанию — Strings::transliterator()
+     * (подменяется глобально через Strings::setTransliterator()); модель может переопределить.
+     */
+    protected static function slugTransliterator(): TransliteratorInterface
+    {
+        return Strings::transliterator();
+    }
+
     // Правило преобразования заголовка в транслит
     public static function translit($title): string
     {
-        $translit = Strings::translit((string) $title, "-");
+        $translit = static::slugTransliterator()->translit((string) $title, "-");
         $translit = preg_replace('#[-]{2,}#', '-', $translit);
         $translit = trim($translit, "-");
         if ($translit && !preg_match('#[^\d]+#', $translit)) {

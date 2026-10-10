@@ -12,6 +12,11 @@ trait Deletable
     {
         $this->assertWritable();
         $id = $this->{$this->pk()};
+        // Модель без значения первичного ключа удалять нечего: no-op без запроса и событий
+        // (для удаления по условию — deleteWhere() или ->where(...)->collection()->delete()).
+        if ($id === null || $id === '' || $id === false) {
+            return 0;
+        }
         $stat = true;
 
         $relations = [];

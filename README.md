@@ -57,6 +57,18 @@ See [With-profiles](#with-profiles-describe-the-data-let-the-caller-choose) belo
 - PHP 8.4+
 - [`jam/dbsimple`](https://github.com/voxel99/dbsimple) (MySQL via PDO is the primary target; the generated SQL uses the MySQL dialect)
 
+**Upgrading existing models:** `Model::$types` is declared without a type, so a model must
+declare it as `protected $types = [...]` (`protected array $types` is a fatal error), and an
+overridden `where()` must accept `string|array|Criteria|null`. See [CHANGELOG.md](CHANGELOG.md)
+for all breaking and behaviour changes.
+
+**Slug transliteration** (`SlugEvaluatable`) is replaceable: implement
+`Jam\Models\Utils\Translit\TransliteratorInterface` and register it with
+`Strings::setTransliterator()`, or wrap a function:
+`Strings::setTransliterator(new CallableTransliterator('translit'))`. A model can override
+`protected static function slugTransliterator()`. Without it, a global `translit()` function
+(if the application declares one) or the built-in `Strings::translit()` is used.
+
 ---
 
 ## Installation

@@ -76,21 +76,41 @@ trait Insertable
     public function insert()
     {
         $id = $this->doInsert();
-        $this->id($id);
+        $this->assignInsertId($id);
         return $id;
     }
 
     public function insertI()
     {
         $id = $this->doInsert(true);
-        $this->id($id);
+        $this->assignInsertId($id);
         return $id;
     }
 
     public function insertD()
     {
         $id = $this->doInsert(false, true);
-        $this->id($id);
+        $this->assignInsertId($id);
         return $id;
+    }
+
+    /**
+     * Storage вернул «пустой» insert id: строка не вставлена (INSERT IGNORE без вставки,
+     * отменённое событие creating) или ключ не автоинкрементный.
+     */
+    public static function isEmptyInsertId($id): bool
+    {
+        return $id === null || $id === false || $id === 0 || $id === '' || $id === '0';
+    }
+
+    /**
+     * Пустой insert id в модель не присваивается: иначе модель получила бы pk = 0,
+     * и следующий save() сделал бы UPDATE ... WHERE id = 0.
+     */
+    private function assignInsertId($id): void
+    {
+        if (!static::isEmptyInsertId($id)) {
+            $this->id($id);
+        }
     }
 }
