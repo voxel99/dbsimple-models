@@ -56,8 +56,8 @@ final class EagerLoadingTest extends DatabaseTestCase
         $this->assertInstanceOf(ModelList::class, $users[0]->posts);
         $this->assertSame(['A1', 'A2'], $users[0]->posts->column('title'));
         $this->assertSame(['B1'], $users[1]->posts->column('title'));
-        $this->assertInstanceOf(ModelList::class, $users[2]->posts, 'no related rows — empty list, not null');
-        $this->assertTrue($users[2]->posts->isEmpty());
+        $this->assertNull($users[2]->posts, 'no related rows — null, loaded state is in isRelationLoaded()');
+        $this->assertTrue($users[2]->isRelationLoaded('posts'));
     }
 
     public function testHasOneAndBelongs(): void
@@ -89,7 +89,7 @@ final class EagerLoadingTest extends DatabaseTestCase
         $this->assertQueryCount(3); // posts, post_tag, tags
         $this->assertSame('SELECT * FROM post_tag WHERE `post_id` IN (1, 2, 3)', $this->queries()[1]);
         $this->assertSame(['php', 'orm'], $posts[0]->tags->column('name'));
-        $this->assertTrue($posts[1]->tags->isEmpty());
+        $this->assertNull($posts[1]->tags);
         $this->assertSame(['orm', 'sql'], $posts[2]->tags->column('name'));
     }
 
@@ -162,7 +162,7 @@ final class EagerLoadingTest extends DatabaseTestCase
         // l(N) ограничивает общий запрос по связи, а не количество записей у каждого родителя
         $users = User::instance()->with('posts:o(id):l(1)')->orderBy('id')->all();
         $this->assertSame(['A1'], $users[0]->posts->column('title'));
-        $this->assertTrue($users[1]->posts->isEmpty());
+        $this->assertNull($users[1]->posts);
     }
 
     public function testReturnEmptyMarker(): void
@@ -238,15 +238,19 @@ final class EagerLoadingTest extends DatabaseTestCase
         $carol = User::instance()->with('profile, posts.comments')->id(3)->first();
         $this->assertQueryCount(3); // users, profiles, posts — comments не запрашиваются: постов нет
 
-        $this->assertInstanceOf(ModelList::class, $carol->posts);
-        $this->assertTrue($carol->posts->isEmpty());
+        // Пустая связь остаётся null: empty()/isset() на свойстве работают как до isRelationLoaded()
+        $this->assertNull($carol->posts);
+        $this->assertTrue(empty($carol->posts));
+        $this->assertFalse(isset($carol->posts));
         $this->assertTrue($carol->isRelationLoaded('posts'));
         $this->assertNull($carol->profile);
+        $this->assertTrue(empty($carol->profile));
+        $this->assertFalse(isset($carol->profile));
         $this->assertTrue($carol->isRelationLoaded('profile'));
 
         // Обращение к загруженной пустой связи не порождает запросов
         $this->resetQueryLog();
-        foreach ($carol->posts as $post) {
+        foreach ($carol->posts ?? [] as $post) {
             $this->fail('no posts expected');
         }
         $this->assertQueryCount(0);
@@ -264,8 +268,10 @@ final class EagerLoadingTest extends DatabaseTestCase
         // A2 (2): без категории, комментариев и тегов
         $this->assertTrue($posts[1]->isRelationLoaded('category'));
         $this->assertNull($posts[1]->category);
-        $this->assertTrue($posts[1]->comments->isEmpty());
-        $this->assertTrue($posts[1]->tags->isEmpty());
+        $this->assertTrue($posts[1]->isRelationLoaded('comments'));
+        $this->assertNull($posts[1]->comments);
+        $this->assertTrue($posts[1]->isRelationLoaded('tags'));
+        $this->assertNull($posts[1]->tags);
         $this->assertSame('Alice', $posts[1]->author->name);
 
         // Вложенный уровень: belongs-связь комментария загружена у каждого комментария
@@ -290,5 +296,99 @@ final class EagerLoadingTest extends DatabaseTestCase
         // Непустые связи выводятся как раньше
         $arr = User::instance()->with('posts')->id(2)->first()->toArray();
         $this->assertSame(['B1'], array_column($arr['posts'], 'title'));
+    }
+
+    /**
+     * Регрессия: пустое отношение из with() не должно становиться «непустым» для empty()/isset().
+     *
+     * @return array<string, array{class-string, string, int, string}>
+     */
+    public static function emptyRelationProvider(): array
+    {
+        return [
+            'hasMany' => [User::class, 'posts', 3, 'posts'],
+            'pivot hasMany' => [Post::class, 'tags', 2, 'tags'],
+            'hasOne' => [User::class, 'profile', 3, 'profile'],
+            'belongs' => [Post::class, 'category', 2, 'category'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('emptyRelationProvider')]
+    public function testEmptyRelationFromWithIsNullButLoaded(string $class, string $with, int $id, string $alias): void
+    {
+        $model = $class::instance()->with($with)->id($id)->first();
+        $this->assertNull($model->$alias);
+        $this->assertTrue(empty($model->$alias));
+        $this->assertFalse(isset($model->$alias));
+        $this->assertFalse((bool) $model->$alias);
+        $this->assertTrue($model->isRelationLoaded($alias));
+
+        $plain = $class::instance()->id($id)->first();
+        $this->assertFalse($plain->isRelationLoaded($alias));
+        // Формат toArray одинаков для «не загружено» и «загружено, но пусто»
+        $this->assertEquals($plain->toArray(), $model->toArray());
+        $this->assertArrayNotHasKey($alias, $model->toArray());
+
+        $clone = clone $model;
+        $this->assertTrue($clone->isRelationLoaded($alias));
+        $this->assertNull($clone->$alias);
+
+        $copy = unserialize(serialize($model));
+        $this->assertTrue($copy->isRelationLoaded($alias));
+        $this->assertNull($copy->$alias);
+        $this->assertFalse(isset($copy->$alias));
+        $this->assertEquals($model->toArray(), $copy->toArray());
+
+        $plainCopy = unserialize(serialize($plain));
+        $this->assertFalse($plainCopy->isRelationLoaded($alias));
+    }
+
+    public function testNonEmptyRelationsBehaveAsBefore(): void
+    {
+        $post = Post::instance()->with('author, category, comments, tags')->id(1)->first();
+        foreach (['author', 'category', 'comments', 'tags'] as $alias) {
+            $this->assertTrue($post->isRelationLoaded($alias));
+            $this->assertNotEmpty($post->$alias);
+            $this->assertTrue(isset($post->$alias));
+        }
+        $this->assertInstanceOf(ModelList::class, $post->comments);
+        $this->assertFalse($post->comments->isEmpty());
+
+        $arr = $post->toArray();
+        foreach (['author', 'category', 'comments', 'tags'] as $alias) {
+            $this->assertArrayHasKey($alias, $arr);
+        }
+
+        $copy = unserialize(serialize($post));
+        $this->assertEquals($arr, $copy->toArray());
+        $this->assertTrue((clone $post)->isRelationLoaded('tags'));
+    }
+
+    public function testSerializeKeepsNestedLoadedEmptyRelations(): void
+    {
+        // Посты Alice: у второго (A2) нет категории, комментариев и тегов
+        $user = User::instance()->with('posts.category, posts.comments, posts.tags')->id(1)->first();
+        $a2 = null;
+        foreach ($user->posts as $p) {
+            if ($p->title === 'A2') {
+                $a2 = $p;
+            }
+        }
+        $this->assertNotNull($a2);
+        $this->assertTrue($a2->isRelationLoaded('comments'));
+        $this->assertNull($a2->comments);
+
+        $copy = unserialize(serialize($user));
+        $this->assertEquals($user->toArray(), $copy->toArray());
+        foreach ($copy->posts as $p) {
+            foreach (['category', 'comments', 'tags'] as $alias) {
+                $this->assertTrue($p->isRelationLoaded($alias), $p->title . '.' . $alias);
+            }
+            $this->assertFalse($p->isRelationLoaded('author'));
+            if ($p->title === 'A2') {
+                $this->assertNull($p->comments);
+                $this->assertFalse(isset($p->tags));
+            }
+        }
     }
 }

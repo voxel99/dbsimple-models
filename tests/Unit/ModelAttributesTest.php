@@ -118,10 +118,22 @@ final class ModelAttributesTest extends ModelTestCase
         // Пустые данные связи в массиве инициализации: связь загружена, но пуста
         $user = new User(['id' => 1, 'posts' => [], 'profile' => null]);
         $this->assertTrue($user->isRelationLoaded('posts'));
-        $this->assertTrue($user->posts->isEmpty());
+        $this->assertNull($user->posts);
+        $this->assertFalse(isset($user->posts));
         $this->assertTrue($user->isRelationLoaded('profile'));
         $this->assertNull($user->profile);
         $this->assertSame(['id' => 1], $user->toArray());
+
+        // Ручное присваивание связи (в т.ч. null) помечает её загруженной; поля — нет
+        $user = new User(['id' => 1]);
+        $user->profile = null;
+        $this->assertTrue($user->isRelationLoaded('profile'));
+        $user->name = 'A';
+        $this->assertFalse($user->isRelationLoaded('name'));
+
+        $clone = clone $user;
+        $this->assertTrue($clone->isRelationLoaded('profile'));
+        $this->assertFalse($clone->isRelationLoaded('posts'));
     }
 
     public function testGuardedFieldCannotBeAssignedButCanBeHydrated(): void

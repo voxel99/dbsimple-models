@@ -143,10 +143,10 @@ $activeUsers = User::instance()
 $users = User::instance()->with('posts(id, title):o(id DESC), profile')->all();
 $usersArray = $users->toArray(':cd');
 
-// A requested relation is always set, even with no related rows:
-// hasMany -> empty ModelList, hasOne/belongs -> null (empty lists are still omitted from toArray())
-$users[0]->posts->isEmpty();
-$users[0]->isRelationLoaded('profile'); // true: loaded (maybe null), no lazy re-query needed
+// A requested relation with no related rows stays null (empty() is true, omitted from toArray()),
+// but is marked as loaded, so "loaded but empty" differs from "not requested":
+empty($users[0]->posts);                // true when the user has no posts
+$users[0]->isRelationLoaded('posts');   // true: loaded (maybe empty), no lazy re-query needed
 ```
 
 #### Creating & Updating

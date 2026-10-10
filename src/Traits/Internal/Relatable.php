@@ -147,6 +147,60 @@ trait Relatable
         unset($this->jamLoadedRelations[$alias]);
     }
 
+    /**
+     * Дерево загруженных связей для serialize(): toArray() пустые связи не выводит,
+     * поэтому факт загрузки переносится отдельно, включая вложенные модели.
+     * Формат: [alias => [] | ['m' => дерево] | ['l' => [ключ => дерево]]].
+     *
+     * @internal
+     * @return array<string, array<string, mixed>>
+     */
+    public function exportLoadedRelations(): array
+    {
+        $tree = [];
+        foreach (array_keys($this->getAllRelations()) as $alias) {
+            if (!$this->isRelationLoaded($alias)) {
+                continue;
+            }
+            $node = [];
+            $value = $this->$alias;
+            if ($value instanceof self) {
+                if ($sub = $value->exportLoadedRelations()) {
+                    $node['m'] = $sub;
+                }
+            } elseif ($value instanceof ModelList) {
+                foreach ($value as $k => $item) {
+                    if ($item instanceof self && ($sub = $item->exportLoadedRelations())) {
+                        $node['l'][$k] = $sub;
+                    }
+                }
+            }
+            $tree[$alias] = $node;
+        }
+        return $tree;
+    }
+
+    /**
+     * @internal Восстанавливает дерево из exportLoadedRelations() после unserialize()
+     * @param array<string, array<string, mixed>> $tree
+     */
+    public function importLoadedRelations(array $tree): void
+    {
+        foreach ($tree as $alias => $node) {
+            $this->jamLoadedRelations[$alias] = true;
+            $value = $this->$alias;
+            if (isset($node['m']) && $value instanceof self) {
+                $value->importLoadedRelations($node['m']);
+            } elseif (isset($node['l']) && $value instanceof ModelList) {
+                foreach ($node['l'] as $k => $sub) {
+                    if (($item = $value[$k]) instanceof self) {
+                        $item->importLoadedRelations($sub);
+                    }
+                }
+            }
+        }
+    }
+
     public function getLocalKeys()
     {
         $keys = array_map(static fn(Relation $R) => $R->localKey(), array_values($this->getAllRelations()));

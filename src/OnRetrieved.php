@@ -436,9 +436,9 @@ class OnRetrieved
 
     /**
      * Строкам, у которых нет связанных записей, проставляет пустое значение связи:
-     * [] для hasMany (в модели станет пустым ModelList), null для hasOne/belongs.
-     * Так «загружено, но пусто» отличается от «не загружено» (см. Model::isRelationLoaded)
-     * и потребители не уходят в N+1, догружая связь построчно.
+     * [] для hasMany, null для hasOne/belongs. При гидрации ключ связи только помечает её
+     * загруженной (Model::isRelationLoaded), само свойство остаётся null — так «загружено,
+     * но пусто» отличается от «не загружено», не ломая empty()/isset() на свойстве.
      */
     private function fillEmptyRelation(Relation $R, array &$returnRows): void
     {

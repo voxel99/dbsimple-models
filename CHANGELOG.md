@@ -56,6 +56,15 @@ updating.
 
 ### Fixed
 
+- A relation requested via `with()` that has no related rows is left unset again,
+  as in 1dc70de: `$model->rel === null`, `empty($model->rel)` is `true`,
+  `isset($model->rel)` is `false` (on main after 1dc70de an empty hasMany/pivot
+  relation became an empty `ModelList`, which inverted every
+  `empty()`/`isset()`/`if ($model->rel)` check). The "loaded but empty" state is
+  tracked separately and read by `isRelationLoaded()`; it is also set by manual
+  assignment (`$model->rel = ...`, including `null`) and survives `clone` and
+  `serialize()`/`unserialize()` (nested models included). `toArray()` output is
+  unchanged.
 - A field declared in both `$computed` and `$extra` (an assigned value takes
   priority over the computed one) lost its assigned value on any later
   assignment, `save()` or `EVENT_CREATED` handler. Only values actually computed
