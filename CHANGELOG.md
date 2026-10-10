@@ -53,6 +53,13 @@ updating.
   `0` without a query and without `deleting`/`deleted` events (previously it ran
   `DELETE ... WHERE id = NULL`; on main after 1dc70de it threw a `TypeError`).
   To delete by condition use `deleteWhere(...)` or `->where(...)->collection()->delete()`.
+- All flags of one `with()` node are honoured. In 1dc70de they were deduplicated
+  with a loose `array_unique()`, so a flag whose value was `==` to an earlier one
+  was silently dropped: `rel:c:p(weight)` and `rel:d:p` lost `p` (no `@pivot` in
+  `toArray()`), `rel:p(a|b):c` lost `c`, `rel:p:o(id)` lost `o`. After upgrading,
+  such expressions take effect, e.g. `@pivot` appears where `:p` was written but
+  never worked. Check `with()` expressions that combine `p` with other flags and
+  remove the flags you do not need.
 
 ### Fixed
 
